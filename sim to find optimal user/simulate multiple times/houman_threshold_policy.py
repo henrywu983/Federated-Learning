@@ -11,30 +11,43 @@ import os
 from datetime import datetime
 import sys
 import random as rnd
+
 # Start time
 start_time = time.time()
-# Load the threshold values from the CSV file
-file_path = 'optimized_thresholds.csv'
-threshold_data = pd.read_csv(file_path)
 
-# Extract the threshold list
-threshold_list_from_csv = threshold_data['OptimalThreshold'].tolist()
+from scipy.io import loadmat
+
+# Path to the .mat file
+mat_file_path = 'ThresholdVector.mat'
+
+# Load the .mat file
+mat_data = loadmat(mat_file_path)
+
+# Assuming the matrix is stored under a variable name (e.g., 'thresholdvector')
+# Replace 'thresholdvector' with the actual variable name in your .mat file
+threshold_vector = mat_data['ThresholdVector']
+
+# Convert it to a Python list for easier handling (optional)
+threshold_list = threshold_vector.flatten().tolist()
+
+# Print the threshold values
+print("Threshold values:", threshold_list)
 # Simulate command-line arguments
 sys.argv = [
     'placeholder_script_name',
-    '--learning_rate', '0.0001',
+    '--learning_rate', '0.01',
     '--epochs', '3',
     '--batch_size', '64',
     '--num_users', '10',
-    '--fraction', '0.1',
+    '--fraction', '0.2',
     '--transmission_probability', '0.1',
-    '--num_slots', '10',
+    '--num_slots', '5',
     '--num_timeframes', '15',
     '--seeds', '56','85', '12','29','42',
-    '--gamma_momentum', '1',
-    '--use_memory_matrix', 'false',
+    '--gamma_momentum', '0.2',
+    '--use_memory_matrix', 'true',
     '--threshold'
-] + list(map(str,threshold_list_from_csv))
+] + list(map(str, threshold_list))
 
 # Command-line arguments
 parser = argparse.ArgumentParser(description="Federated Learning with Slotted ALOHA and CIFAR-10 Dataset")
@@ -65,10 +78,10 @@ seeds_for_avg = args.seeds
 gamma_momentum = args.gamma_momentum
 use_memory_matrix = args.use_memory_matrix.lower()
 threshold_list = args.threshold
+
 # Print out the threshold list to confirm
 print(threshold_list)
 print(f"use_memory_matrix: {use_memory_matrix}")
-
 # Device configuration
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"\n{'*' * 50}\n*** Using device: {device} ***\n{'*' * 50}\n")
@@ -184,8 +197,7 @@ for run in range(num_runs):
         # Initialize the model
         model = VGG16(num_classes=num_classes).to(device)
         criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
+        optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
         w_before_train = [param.data.clone() for param in model.parameters()]
 
         for timeframe in range(num_timeframes):
@@ -255,8 +267,8 @@ for run in range(num_runs):
                 tx_prob = 1 / len(active_users)
             else:
                 while not active_users:
-                    current_threshold *= 0.9
-                    active_users = [user_id for user_id, grad_norm, _ in user_gradients if grad_norm > 0]
+                    current_threshold *= 0.99
+                    active_users = [user_id for user_id, grad_norm, _ in user_gradients if grad_norm > current_threshold]
                 tx_prob = 1 / len(active_users)
             num_active_users = len(active_users)
             print(f"*** {num_active_users} Active User(s) ***")
@@ -304,7 +316,7 @@ for run in range(num_runs):
             w_before_train = new_weights
             torch.cuda.empty_cache()
 
-            print(f"Best number of active users: {num_active_users}")
+            print(f"Number of active users: {num_active_users}")
             print(f"Mean Accuracy at Timeframe {timeframe + 1}: {accuracy:.2f}%")
 
 # Prepare data for saving
@@ -482,4 +494,4 @@ summary_file_path = os.path.join(save_dir, 'run_summary.txt')
 with open(summary_file_path, 'w') as summary_file:
     summary_file.write(summary_content)
 
-print(f"Run summary saved to: {summary_file_path}")	
+print(f"Run summary saved to: {summary_file_path}") 
