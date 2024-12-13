@@ -199,14 +199,14 @@ for run in range(num_runs):
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
         w_before_train = [param.data.clone() for param in model.parameters()]
+        memory_matrix = [[torch.zeros_like(param).to(device) for param in w_before_train] for _ in range(num_users)]
 
         for timeframe in range(num_timeframes):
             print(f"******** Timeframe {timeframe + 1} with Threshold {threshold_list[timeframe]}********")
             if timeframe > 0:
                 model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), new_weights)})
             torch.cuda.empty_cache()
-
-            memory_matrix = [[torch.zeros_like(param).to(device) for param in w_before_train] for _ in range(num_users)]
+        
             sparse_gradient = [[torch.zeros_like(param).to(device) for param in w_before_train] for _ in range(num_users)]
 
             model.eval()
