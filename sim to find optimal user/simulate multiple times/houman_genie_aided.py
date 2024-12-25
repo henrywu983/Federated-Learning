@@ -27,7 +27,7 @@ sys.argv = [
     '--num_timeframes', '15',
     '--seeds', '56','85', '12','29','42',
     '--gamma_momentum', '1',
-    '--use_memory_matrix', 'true'
+    '--use_memory_matrix', 'false'
 ]
 
 # Command-line arguments
