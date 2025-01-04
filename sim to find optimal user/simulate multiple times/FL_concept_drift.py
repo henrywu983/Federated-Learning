@@ -20,7 +20,7 @@ start_time = time.time()
 # Simulate command-line arguments
 sys.argv = [
     'placeholder_script_name',
-    '--learning_rate', '0.00005',
+    '--learning_rate', '0.001',
     '--epochs', '3',
     '--batch_size', '64',
     '--num_users', '10',
@@ -247,7 +247,7 @@ def plot_user_data_distribution(train_data_Y, num_users, timeframe):
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
 
 # Number of simulations
-num_runs = 1
+num_runs = 5
 # Testing purpose
 # num_runs = 1
 
@@ -339,8 +339,8 @@ for run in range(num_runs):
         # Initialize the model
         model = VGG16(num_classes=num_classes).to(device)
         criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-        # optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
+        # optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
 
         # user_losses = {user_id: [] for user_id in range(num_users)}        
         # global_loss = []
