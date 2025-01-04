@@ -22,7 +22,7 @@ sys.argv = [
     'placeholder_script_name',
     '--learning_rate', '0.00005',
     '--epochs', '3',
-    '--batch_size', '32',
+    '--batch_size', '64',
     '--num_users', '10',
     '--fraction', '0.1',
     '--transmission_probability', '0.1',
