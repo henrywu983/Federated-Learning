@@ -33,7 +33,8 @@ sys.argv = [
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
     '--arrival_rate', '0.5',
-    '--super_frame', '5'
+    '--super_frame', '5',
+    '--num_runs', '5'
 ]
 
 # Command-line arguments
@@ -52,6 +53,7 @@ parser.add_argument('--use_memory_matrix', type=str, default='true', help='Switc
 parser.add_argument('--user_data_size', type=int, default=2000, help='Number of samples each user gets')
 parser.add_argument('--arrival_rate', type=float, default=0.5,help='Arrival rate of new information')
 parser.add_argument('--super_frame', type=int, default=5,help='When concept drift happens')
+parser.add_argument('--num_runs', type=int, default=5,help='Number of simulations')
 
 args = parser.parse_args()
 
@@ -71,6 +73,7 @@ user_data_size = args.user_data_size
 tx_prob = args.transmission_probability
 arrival_rate = args.arrival_rate
 super_frame = args.super_frame
+num_runs = args.num_runs
 
 # Device configuration
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -252,11 +255,6 @@ def plot_user_data_distribution(train_data_Y, num_users, timeframe):
   plt.show()
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
-
-# Number of simulations
-num_runs = 5
-# Testing purpose
-# num_runs = 1
 
 # Initialize matrices for results with an additional dimension for num_active_users
 global_grad_mag = np.zeros((num_runs, len(seeds_for_avg), num_timeframes))
