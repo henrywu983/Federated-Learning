@@ -92,9 +92,16 @@ classes = {0: "airplane", 1: "automobile", 2: "bird", 3: "cat", 4: "deer", 5: "d
 
 # VGG16 Model
 class VGG16(nn.Module):
-    def __init__(self, num_classes=10):
+    def __init__(self, num_classes=10, train_dense_only=True):
         super(VGG16, self).__init__()
         self.features = torchvision.models.vgg16(weights=torchvision.models.VGG16_Weights.IMAGENET1K_V1).features
+
+        # Freeze the feature extractor if train_dense_only is True
+        self.train_dense_only = train_dense_only
+        if self.train_dense_only:
+            for param in self.features.parameters():
+                param.requires_grad = False
+        
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(512 * 1 * 1, 512),
