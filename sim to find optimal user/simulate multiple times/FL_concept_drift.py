@@ -34,7 +34,8 @@ sys.argv = [
     '--use_memory_matrix', 'false',
     '--arrival_rate', '0.5',
     '--phase', '5',
-    '--num_runs', '5'
+    '--num_runs', '5',
+    '--slotted_aloha', 'false'
 ]
 
 # Command-line arguments
@@ -54,6 +55,7 @@ parser.add_argument('--user_data_size', type=int, default=2000, help='Number of 
 parser.add_argument('--arrival_rate', type=float, default=0.5,help='Arrival rate of new information')
 parser.add_argument('--phase', type=int, default=5,help='When concept drift happens')
 parser.add_argument('--num_runs', type=int, default=5,help='Number of simulations')
+parser.add_argument('--slotted_aloha', type=str, default=5,help='Whether we use Slotted aloha in the simulation')
 
 args = parser.parse_args()
 
@@ -74,6 +76,7 @@ tx_prob = args.transmission_probability
 arrival_rate = args.arrival_rate
 phase = args.phase
 num_runs = args.num_runs
+slotted_aloha = args.slotted_aloha
 
 # Device configuration
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -435,17 +438,25 @@ for run in range(num_runs):
             packets_received = 0
             distinct_users = set()
 
-            for _ in range(num_slots):
-                successful_users = simulate_transmissions(num_users, tx_prob)
-                if successful_users:
-                    success_user = successful_users[0]
-                    if success_user not in distinct_users:
-                        sum_terms = [sum_terms[j] + sparse_gradient[success_user][j] for j in range(len(sum_terms))]
-                        packets_received += 1
-                        distinct_users.add(success_user)
+            if slotted_aloha == 'true':
+                for _ in range(num_slots):
+                    successful_users = simulate_transmissions(num_users, tx_prob)
+                    if successful_users:
+                        success_user = successful_users[0]
+                        if success_user not in distinct_users:
+                            sum_terms = [sum_terms[j] + sparse_gradient[success_user][j] for j in range(len(sum_terms))]
+                            packets_received += 1
+                            distinct_users.add(success_user)
 
-            num_distinct_users = len(distinct_users)
-            print(f"Number of distinct clients: {num_distinct_users}")
+                num_distinct_users = len(distinct_users)
+                print(f"Number of distinct clients: {num_distinct_users}")
+            else:
+                for user_id in range(num_users):
+                    sum_terms = [sum_terms[j] + sparse_gradient[user_id][j] for j in range(len(sum_terms))]
+                    packets_received += 1
+
+                num_distinct_users = num_users
+                print(f"Number of distinct clients: {num_distinct_users} (No Slotted Aloha)")
 
             if num_distinct_users > 0:
                 new_weights = [w_before_train[i] + sum_terms[i] / num_distinct_users for i in range(len(w_before_train))]
