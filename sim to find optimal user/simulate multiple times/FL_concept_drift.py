@@ -33,7 +33,7 @@ sys.argv = [
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
     '--arrival_rate', '0.5',
-    '--super_frame', '5',
+    '--phase', '5',
     '--num_runs', '5'
 ]
 
@@ -52,7 +52,7 @@ parser.add_argument('--gamma_momentum', type=float, nargs='+', default=[0.6], he
 parser.add_argument('--use_memory_matrix', type=str, default='true', help='Switch to use memory matrix (true/false)')
 parser.add_argument('--user_data_size', type=int, default=2000, help='Number of samples each user gets')
 parser.add_argument('--arrival_rate', type=float, default=0.5,help='Arrival rate of new information')
-parser.add_argument('--super_frame', type=int, default=5,help='When concept drift happens')
+parser.add_argument('--phase', type=int, default=5,help='When concept drift happens')
 parser.add_argument('--num_runs', type=int, default=5,help='Number of simulations')
 
 args = parser.parse_args()
@@ -72,7 +72,7 @@ use_memory_matrix = args.use_memory_matrix.lower() == 'true'
 user_data_size = args.user_data_size
 tx_prob = args.transmission_probability
 arrival_rate = args.arrival_rate
-super_frame = args.super_frame
+phase = args.phase
 num_runs = args.num_runs
 
 # Device configuration
@@ -167,7 +167,7 @@ def apply_concept_drift(train_data_X, train_data_Y, class_0_labels, class_1_labe
     Apply concept drift by discarding 40% of data (from both classes)
     and refilling it with a majority of class 1 data.
     """
-    if ((timeframe + 1) // super_frame) % 2 == 1:
+    if ((timeframe + 1) // phase) % 2 == 1:
         print("Applying Concept Drift: Discarding 40% of data from both classes and refilling with majority class 1 data.")
     else:
         print("Applying Concept Drift: Discarding 40% of data from both classes and refilling with majority class 0 data.")
@@ -194,7 +194,7 @@ def apply_concept_drift(train_data_X, train_data_Y, class_0_labels, class_1_labe
 
             # Redistribute 40% of data from both classes with a majority of class 1
             num_refill_samples = int(0.4 * len(train_data_Y[user_id]))  # Total amount to refill for each user
-            if ((timeframe + 1) // super_frame) % 2 == 1:
+            if ((timeframe + 1) // phase) % 2 == 1:
                 num_class_1_samples = int(0.9 * num_refill_samples)  # 90% from class 1
                 num_class_0_samples = num_refill_samples - num_class_1_samples  # Remaining 10% from class 0
             else:
@@ -358,7 +358,7 @@ for run in range(num_runs):
             print(f"******** Timeframe {timeframe + 1} ********")
 
             # Apply Concept Drift at Timeframe 8
-            if (timeframe + 1) % super_frame == 0:
+            if (timeframe + 1) % phase == 0:
                 train_data_X, train_data_Y, user_new_info_dict = apply_concept_drift(train_data_X, train_data_Y, class_0_labels, class_1_labels, num_users, x_train, y_train, arrival_rate, timeframe)
 
             # plot_user_data_distribution(train_data_Y, num_users, timeframe)
