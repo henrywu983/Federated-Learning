@@ -98,7 +98,7 @@ classes = {0: "airplane", 1: "automobile", 2: "bird", 3: "cat", 4: "deer", 5: "d
 
 # VGG16 Model
 class VGG16(nn.Module):
-    def __init__(self, num_classes=10, train_dense_only=True):
+    def __init__(self, num_classes=10, train_dense_only=False):
         super(VGG16, self).__init__()
         self.features = torchvision.models.vgg16(weights=torchvision.models.VGG16_Weights.IMAGENET1K_V1).features
 
