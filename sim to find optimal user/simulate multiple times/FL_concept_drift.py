@@ -55,7 +55,7 @@ parser.add_argument('--user_data_size', type=int, default=2000, help='Number of 
 parser.add_argument('--arrival_rate', type=float, default=0.5,help='Arrival rate of new information')
 parser.add_argument('--phase', type=int, default=5,help='When concept drift happens')
 parser.add_argument('--num_runs', type=int, default=5,help='Number of simulations')
-parser.add_argument('--slotted_aloha', type=str, default=5,help='Whether we use Slotted aloha in the simulation')
+parser.add_argument('--slotted_aloha', type=str, default='true',help='Whether we use Slotted aloha in the simulation')
 
 args = parser.parse_args()
 
