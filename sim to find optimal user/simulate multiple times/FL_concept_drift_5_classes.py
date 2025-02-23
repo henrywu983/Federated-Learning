@@ -29,7 +29,7 @@ sys.argv = [
     '--transmission_probability', '0.1',
     '--num_slots', '10',
     '--num_timeframes', '50',
-    '--user_data_size', '2400',
+    '--user_data_size', '500',
     '--seeds', '56', '3', '29', '85', '65',
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
