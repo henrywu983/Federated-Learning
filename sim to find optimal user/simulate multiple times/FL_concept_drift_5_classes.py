@@ -28,15 +28,15 @@ sys.argv = [
     '--fraction', '0.1',
     '--transmission_probability', '0.1',
     '--num_slots', '10',
-    '--num_timeframes', '50',
+    '--num_timeframes', '54', # (phase * 5) + 4
     '--user_data_size', '500',
     '--seeds', '56', '3', '29', '85', '65',
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
     '--arrival_rate', '0.5',
-    '--phase', '5',
+    '--phase', '10', # number of timeframes per phase
     '--num_runs', '5',
-    '--slotted_aloha', 'false',
+    '--slotted_aloha', 'true',
     '--num_memory_cells', '6'
 ]
 
@@ -195,6 +195,7 @@ def partition_data_per_user(x_data, y_data, pattern, num_users, cell_size):
     # Verify that enough samples exist for each class based on the pattern
     pattern_counts = Counter(pattern)
     for cls, count in pattern_counts.items():
+        # Max{count} = num_memory_cell, so Max{required} <= 
         required = count * cell_size * num_users
         available = len(indices_by_class[cls])
         assert available >= required, (
@@ -215,48 +216,54 @@ def partition_data_per_user(x_data, y_data, pattern, num_users, cell_size):
     return user_data
 
 # Concept drift function
-def apply_concept_drift(train_data_X, train_data_Y, class_mappings, num_users, x_train, y_train, arrival_rate, timeframe, cell_size, num_memory_cells):
+def apply_concept_drift(train_data_X, train_data_Y, num_users, x_train, y_train, arrival_rate, timeframe, cell_size, num_memory_cells):
     user_new_info_dict = {}
 
     # Calculate which phase we are in (aka what class should be injected)
     current_phase = (timeframe + 1) // phase - 1
-    print(f"Apply concept drift --> Phase {current_phase}")
+    print(f"Apply concept drift --> Phase {current_phase}, Inject Class {current_phase}")
 
     # For sampling new data from the global pool, get indices for the new_class
     global_indices = np.where(y_train == current_phase)[0]
 
+    # Prepare new memory structures
+    new_memory_X = {}
+    new_memory_Y = {}
+
      # For each user, decide whether drift occurs based on arrival_rate.
     for user in range(num_users):
+        # Split the aggregated data into memory cells.
+        cells_X = np.split(train_data_X[user], num_memory_cells, axis=0)
+        cells_Y = np.split(train_data_Y[user], num_memory_cells, axis=0)
+
         if np.random.rand() < arrival_rate:
             user_new_info_dict[user] = True
             # move the data from cell (i-1) into cell i.
             for cell in range(num_memory_cells - 1, 0, -1):
-                train_data_X[user][cell] = train_data_X[user][cell - 1]
-                train_data_Y[user][cell] = train_data_Y[user][cell - 1]
+                cells_X[cell] = cells_X[cell - 1]
+                cells_Y[cell] = cells_Y[cell - 1]
 
-                # Sample new data for memory cell 0 from the global pool, for the new_class.
-                # If not enough samples are available, allow replacement.
-                if len(global_indices) < cell_size:
-                    sampled_indices = np.random.choice(global_indices, cell_size, replace=True)
-                else:
-                    sampled_indices = np.random.choice(global_indices, cell_size, replace=False)
-                new_x = x_train[sampled_indices]
-                new_y = y_train[sampled_indices]
-                train_data_X[user][0] = new_x
-                train_data_Y[user][0] = new_y
+            # Sample new data for memory cell 0 from the global pool, for the new_class.
+            # If not enough samples are available, allow replacement.
+            if len(global_indices) < cell_size:
+                sampled_indices = np.random.choice(global_indices, cell_size, replace=True)
+            else:
+                sampled_indices = np.random.choice(global_indices, cell_size, replace=False)
+            cells_X[0] = x_train[sampled_indices]
+            cells_Y[0] = y_train[sampled_indices]
         else:
             user_new_info_dict[user] = False
-    
-    # After updating each user's memory cells, re-aggregate the data for each user.
+            
+        new_memory_X[user] = cells_X
+        new_memory_Y[user] = cells_Y
+
+    new_stale_data_info[run][seed_index][current_phase] = user_new_info_dict.copy()
+
     updated_train_data_X = {}
     updated_train_data_Y = {}
-
     for user in range(num_users):
-        # Concatenate the memory cells in order (cell 0 is the newest, cell 5 is the oldest).
-        cell_data_list = [train_data_X[user][cell] for cell in range(num_memory_cells)]
-        cell_labels_list = [train_data_Y[user][cell] for cell in range(num_memory_cells)]
-        updated_train_data_X[user] = np.concatenate(cell_data_list, axis=0)
-        updated_train_data_Y[user] = np.concatenate(cell_labels_list, axis=0)
+        updated_train_data_X[user] = np.concatenate(new_memory_X[user], axis=0)
+        updated_train_data_Y[user] = np.concatenate(new_memory_Y[user], axis=0)
 
     return updated_train_data_X, updated_train_data_Y, user_new_info_dict
 
@@ -379,6 +386,17 @@ correctly_received_packets_stats = {
     for run in range(num_runs)
 }
 
+new_stale_data_info = {
+    run: {
+        seed_index:{
+            Phase: {}
+            for Phase in range(num_timeframes // phase)
+        }
+        for seed_index in range(len(seeds_for_avg))
+    }
+    for run in range(num_runs)
+}
+
 # Main training loop
 seed_count = 1
 
@@ -389,7 +407,7 @@ for run in range(num_runs):
     print(f"************ Run {run + 1} ************")
 
     # Define the initial memory pattern for all users:
-    initial_pattern = [0, 0, 0, 0, 0, 0]
+    initial_pattern = [0, 1, 2, 3, 4, 0]
     cell_size = user_data_size // num_memory_cells 
 
     # Partition the training data for each user using the defined pattern
@@ -429,7 +447,7 @@ for run in range(num_runs):
 
             # Check if it is time for drift to happen
             if (timeframe + 1) % phase == 0:
-                train_data_X, train_data_Y, user_new_info_dict = apply_concept_drift(train_data_X, train_data_Y, class_mappings, 
+                train_data_X, train_data_Y, user_new_info_dict = apply_concept_drift(train_data_X, train_data_Y, 
                                                                                      num_users, x_train, y_train, arrival_rate, 
                                                                                      timeframe, cell_size, num_memory_cells)
 
@@ -449,7 +467,10 @@ for run in range(num_runs):
             # ------------- Begin User Training Loop -------------
             user_gradients = []
             for user_id in range(num_users):
-                print(f"User: {user_id + 1}")
+                if (timeframe + 1) % phase == 0:
+                    print(f"User: {user_id + 1} ({user_new_info_dict[user_id]})")
+                else:
+                    print(f"User: {user_id + 1}")
 
                 # Reset model weights to the initial weights before each user's local training
                 model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), w_before_train)})
@@ -470,9 +491,8 @@ for run in range(num_runs):
                 for epoch in range(epochs):
                     optimizer.zero_grad()
                     # Normalize input; note: original images are assumed to be in [0, 255]
-                    X_train_u_tensor = (X_train_u_tensor / 255.0).float()
-                    output = model(X_train_u_tensor)
-                    loss = criterion(output, Y_train_u_tensor)
+                    X_train_u_tensor = (X_train_u_tensor / 255.0).float()                    
+                    loss = criterion(model(X_train_u_tensor), Y_train_u_tensor)
                     loss.backward()
                     optimizer.step()
                     torch.cuda.empty_cache()
@@ -795,6 +815,31 @@ with open(packets_stats_file_path, 'w') as f:
                 variance_packets = correctly_received_packets_stats[run][seed_index][timeframe]['variance']  # Adjust indexing
                 f.write(f'{run},{seed},{timeframe + 1},{mean_packets},{variance_packets}\n')
 print(f"Correctly received packets statistics saved to: {packets_stats_file_path}")
+
+# Save whether each user recieves new data per phase to CSV
+new_stale_data_info_file_path = os.path.join(save_dir, 'new_stale_data_info.csv')
+# Open the file in write mode
+with open(new_stale_data_info_file_path, 'w') as f:
+    # Write the header row
+    header = "Run,Seed,Phase," + ",".join([f"User_{i}" for i in range(num_users)]) + "\n"
+    f.write(header)
+    # Write the data
+    for run in range(num_runs):
+        for seed_idx in range(len(seeds_for_avg)):
+            for phase in range(num_timeframes // phase):
+                # Create the row
+                row = f"{run},{seed_idx},{phase}"
+                # Get the user data for this phase (if it exists)
+                phase_data = new_stale_data_info[run][seed_idx][phase]
+                # Add user data
+                if phase_data:  # If we have data for this phase
+                    for user in range(num_users):
+                        value = "1" if phase_data.get(user, False) else "0"
+                        row += f",{value}"
+                else:  # If no data for this phase, fill with zeros
+                    row += "," + ",".join(["0"] * num_users)
+                f.write(row + "\n")
+print(f"User's data status per phase is saved to: {new_stale_data_info_file_path}")
 
 # Record end time and calculate elapsed time
 end_time = time.time()
