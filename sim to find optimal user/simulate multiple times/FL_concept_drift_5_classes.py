@@ -464,7 +464,7 @@ for run in range(num_runs):
                 X_train_u, Y_train_u = X_train_u[shuffler], Y_train_u[shuffler]
 
                 # Convert numpy arrays to torch tensors and send to device
-                X_train_u_tensor = torch.tensor(X_train_u).to(device)
+                X_train_u_tensor = torch.tensor(X_train_u).permute(0, 3, 1, 2).to(device)
                 Y_train_u_tensor = torch.tensor(Y_train_u).to(device)
 
                 for epoch in range(epochs):
