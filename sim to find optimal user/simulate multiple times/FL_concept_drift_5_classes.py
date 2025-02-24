@@ -28,13 +28,13 @@ sys.argv = [
     '--fraction', '0.1',
     '--transmission_probability', '0.1',
     '--num_slots', '10',
-    '--num_timeframes', '54', # (phase * 5) + 4
+    '--num_timeframes', '29', # (phase * 5) + 4
     '--user_data_size', '500',
     '--seeds', '56', '3', '29', '85', '65',
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
     '--arrival_rate', '0.5',
-    '--phase', '10', # number of timeframes per phase
+    '--phase', '5', # number of timeframes per phase
     '--num_runs', '5',
     '--slotted_aloha', 'true',
     '--num_memory_cells', '6'
@@ -267,7 +267,7 @@ def apply_concept_drift(train_data_X, train_data_Y, num_users, x_train, y_train,
 
     return updated_train_data_X, updated_train_data_Y, user_new_info_dict
 
-def evaluate_per_class_accuracy(model, testloader, device, class_mappings):
+def evaluate_per_class_accuracy(model, testloader, device, num_classes=5):
     """
     Evaluate and print the accuracy of the model on the test data for each class.
     
@@ -275,45 +275,46 @@ def evaluate_per_class_accuracy(model, testloader, device, class_mappings):
         model (nn.Module): The neural network model.
         testloader (DataLoader): DataLoader for the test dataset.
         device (torch.device): The device to run the evaluation on.
-        class_mappings (dict): Dictionary where each key corresponds to a class group (e.g., 0, 1, ..., 4)
-                               and the value is a list of original class indices.
     
     Returns:
         dict: A dictionary with the per-class accuracies.
     """
     with torch.no_grad():
-        # Initialize counters for correct predictions and totals for each class group
-        correct_counts = {cls: 0 for cls in class_mappings}
-        total_counts = {cls: 0 for cls in class_mappings}
+        accuracies = {}
+        total_correct = 0
         
+        # Track total samples for each class
+        class_counts = {i: 0 for i in range(num_classes)}
+        class_correct = {i: 0 for i in range(num_classes)}
+
         for images, labels in testloader:
-            images = images.to(device)
-            labels = labels.to(device)
+            images, labels = images.to(device), labels.numpy()
+            
+            # Map labels to new classes
+            new_labels = map_to_new_classes(labels)
+            new_labels = torch.tensor(new_labels).to(device)
+
+            # Forward pass
             outputs = model(images)
             predictions = outputs.argmax(dim=1)
-            
-            # Iterate over each sample in the batch
-            for i in range(len(labels)):
-                label_item = labels[i].item()
-                # Check each class group in the mapping
-                for cls in class_mappings:
-                    if label_item in class_mappings[cls]:
-                        total_counts[cls] += 1
-                        if predictions[i] == labels[i]:
-                            correct_counts[cls] += 1
-        
-        # Compute and print the accuracy for each class group
-        accuracies = {}
-        for cls in class_mappings:
-            if total_counts[cls] > 0:
-                accuracies[cls] = 100 * correct_counts[cls] / total_counts[cls]
+
+            for class_idx in range(num_classes):
+                class_mask = (new_labels == class_idx)
+                class_counts[class_idx] += class_mask.sum().item()
+                class_correct[class_idx] += (predictions[class_mask] == class_idx).sum().item()
+
+        # Calculate accuracy for each class
+        for class_idx in range(num_classes):
+            if class_counts[class_idx] > 0:
+                accuracies[class_idx] = 100 * class_correct[class_idx] / class_counts[class_idx]
             else:
-                accuracies[cls] = 0
-            print(f"Accuracy for Class {cls}: {accuracies[cls]:.2f}%")
+                accuracies[class_idx] = 0  # If no samples exist, set accuracy to 0
+
+            print(f"Accuracy for Class {class_idx}: {accuracies[class_idx]:.2f}%")
         
-        correct = sum((model(images.to(device)).argmax(dim=1) == labels.to(device)).sum().item()
-                                  for images, labels in testloader)
-    return accuracies, correct
+        total_correct = sum(class_correct.values())
+
+    return accuracies, total_correct
 
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
@@ -556,7 +557,7 @@ for run in range(num_runs):
 
             model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), new_weights)})
 
-            per_class_accuracies, correct = evaluate_per_class_accuracy(model, testloader, device, class_mappings)
+            per_class_accuracies, correct = evaluate_per_class_accuracy(model, testloader, device, num_classes=5)
                 
             accuracy = 100 * correct / len(testset)
 
