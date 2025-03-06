@@ -14,6 +14,7 @@ import random as rnd
 import matplotlib.pyplot as plt
 from collections import Counter
 import random as rnd
+from sklearn.metrics import confusion_matrix, f1_score
 
 # Start time
 start_time = time.time()
@@ -28,14 +29,14 @@ sys.argv = [
     '--fraction', '0.1',
     '--transmission_probability', '0.1',
     '--num_slots', '10',
-    '--num_timeframes', '29', # (phase * 5) + 4
-    '--user_data_size', '500',
-    '--seeds', '56', '3', '29', '85', '65',
+    '--num_timeframes', '54', # (phase * 5) + 4
+    '--user_data_size', '1500',
+    '--seeds', '56',# '3', '29', '85', '65',
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
     '--arrival_rate', '0.5',
-    '--phase', '5', # number of timeframes per phase
-    '--num_runs', '5',
+    '--phase', '10', # number of timeframes per phase
+    '--num_runs', '1',
     '--slotted_aloha', 'true',
     '--num_memory_cells', '6'
 ]
@@ -224,7 +225,7 @@ def apply_concept_drift(train_data_X, train_data_Y, num_users, x_train, y_train,
     print(f"Apply concept drift --> Phase {current_phase}, Inject Class {current_phase}")
 
     # For sampling new data from the global pool, get indices for the new_class
-    global_indices = np.where(y_train == current_phase)[0]
+    global_indices = np.where(np.isin(y_train, class_mappings[current_phase]))[0]
 
     # Prepare new memory structures
     new_memory_X = {}
@@ -298,10 +299,18 @@ def evaluate_per_class_accuracy(model, testloader, device, num_classes=5):
             outputs = model(images)
             predictions = outputs.argmax(dim=1)
 
+            # Map model predictions (still in 10-class space) to the new 5-class space
+            mapped_predictions = map_to_new_classes(predictions.cpu().numpy())
+            mapped_predictions = torch.tensor(mapped_predictions).to(device)
+
             for class_idx in range(num_classes):
                 class_mask = (new_labels == class_idx)
                 class_counts[class_idx] += class_mask.sum().item()
-                class_correct[class_idx] += (predictions[class_mask] == class_idx).sum().item()
+                class_correct[class_idx] += (mapped_predictions[class_mask] == class_idx).sum().item()
+
+        # Compute overall accuracy by summing counts from all classes
+        total_samples = sum(class_counts.values())
+        total_correct = sum(class_correct.values())
 
         # Calculate accuracy for each class
         for class_idx in range(num_classes):
@@ -311,10 +320,74 @@ def evaluate_per_class_accuracy(model, testloader, device, num_classes=5):
                 accuracies[class_idx] = 0  # If no samples exist, set accuracy to 0
 
             print(f"Accuracy for Class {class_idx}: {accuracies[class_idx]:.2f}%")
-        
-        total_correct = sum(class_correct.values())
 
-    return accuracies, total_correct
+        # Compute overall accuracy as a percentage
+        overall_accuracy = 100 * total_correct / total_samples if total_samples > 0 else 0
+    return accuracies, overall_accuracy
+
+def evaluate_with_metrics(model, testloader, device, timeframe, num_classes=5, 
+                          conf_matrix_dir='conf_matrices', f1_dir='f1_scores'):
+    """
+    Evaluate the model on the test set, compute a confusion matrix and F1 score,
+    and save them to files for each timeframe.
+    
+    The function maps both the model's predictions and the ground truth labels from 
+    the original 10 classes to 5 new classes using the map_to_new_classes function.
+    
+    Args:
+        model (nn.Module): The neural network model.
+        testloader (DataLoader): DataLoader for the test dataset.
+        device (torch.device): Device to run the evaluation on.
+        timeframe (int): The current timeframe identifier.
+        num_classes (int): The number of new classes (default is 5).
+        conf_matrix_dir (str): Directory where confusion matrix files will be saved.
+        f1_dir (str): Directory where F1 score files will be saved.
+    
+    Returns:
+        tuple: A tuple containing:
+            - conf_matrix (np.ndarray): The confusion matrix.
+            - f1 (float): The weighted F1 score across all classes.
+    """
+    all_labels = []
+    all_preds = []
+    
+    with torch.no_grad():
+        for images, labels in testloader:
+            images = images.to(device)
+            labels_np = labels.numpy()
+            
+            outputs = model(images)
+            preds = outputs.argmax(dim=1)
+            
+            # Map both predictions and labels from 10 classes to 5 classes
+            mapped_preds = map_to_new_classes(preds.cpu().numpy())
+            mapped_labels = map_to_new_classes(labels_np)
+            
+            all_preds.extend(mapped_preds)
+            all_labels.extend(mapped_labels)
+    
+    # Convert lists to numpy arrays for metric computation
+    all_preds = np.array(all_preds)
+    all_labels = np.array(all_labels)
+    
+    # Compute confusion matrix and weighted F1 score
+    conf_matrix = confusion_matrix(all_labels, all_preds)
+    f1 = f1_score(all_labels, all_preds, average='weighted')
+    
+    # Create directories if they don't exist
+    os.makedirs(conf_matrix_dir, exist_ok=True)
+    os.makedirs(f1_dir, exist_ok=True)
+    
+    # Save the confusion matrix to a file, using comma as delimiter for CSV format
+    conf_matrix_filename = os.path.join(conf_matrix_dir, f'conf_matrix_timeframe_{timeframe}.txt')
+    np.savetxt(conf_matrix_filename, conf_matrix, fmt='%d', delimiter=',')
+    
+    # Save the F1 score to a file
+    f1_filename = os.path.join(f1_dir, f'f1_timeframe_{timeframe}.txt')
+    with open(f1_filename, 'w') as f:
+        f.write(f'F1 Score (weighted) for timeframe {timeframe}: {f1:.4f}\n')
+    
+    return conf_matrix, f1
 
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
@@ -408,7 +481,7 @@ for run in range(num_runs):
     print(f"************ Run {run + 1} ************")
 
     # Define the initial memory pattern for all users:
-    initial_pattern = [0, 1, 2, 3, 4, 0]
+    initial_pattern = [1, 2, 3, 4, 0, 1]
     cell_size = user_data_size // num_memory_cells 
 
     # Partition the training data for each user using the defined pattern
@@ -460,9 +533,27 @@ for run in range(num_runs):
 
             model.eval()
             with torch.no_grad():
-                correct = sum((model(images.to(device)).argmax(dim=1) == labels.to(device)).sum().item()
-                              for images, labels in testloader)
-            initial_accuracy = 100 * correct / len(testset)
+                correct = 0
+                total = 0
+                for images, labels in testloader:
+                    # Move images to device; convert labels to NumPy array for mapping
+                    images = images.to(device)
+                    labels_np = labels.numpy()
+        
+                    # Get the model outputs and original predictions (10 classes)
+                    outputs = model(images)
+                    preds = outputs.argmax(dim=1)
+        
+                    # Map both predictions and labels to the 5 new classes
+                    mapped_preds = torch.tensor(map_to_new_classes(preds.cpu().numpy())).to(device)
+                    mapped_labels = torch.tensor(map_to_new_classes(labels_np)).to(device)
+        
+                    # Update counts: Compare the mapped predictions with mapped labels
+                    correct += (mapped_preds == mapped_labels).sum().item()
+                    total += labels.size(0)
+        
+            initial_accuracy = 100 * correct / total
+
             print(f"Initial Accuracy at Timeframe {timeframe + 1}: {initial_accuracy:.2f}%")
 
             # ------------- Begin User Training Loop -------------
@@ -557,9 +648,10 @@ for run in range(num_runs):
 
             model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), new_weights)})
 
-            per_class_accuracies, correct = evaluate_per_class_accuracy(model, testloader, device, num_classes=5)
-                
-            accuracy = 100 * correct / len(testset)
+            per_class_accuracies, accuracy = evaluate_per_class_accuracy(model, testloader, device, num_classes=5)
+            
+            # Evaluate with additional metrics and save the results
+            conf_matrix, f1 = evaluate_with_metrics(model, testloader, device, timeframe + 1, num_classes=5)
 
             # Store results and check if this is the best accuracy so far
             accuracy_distributions[run][seed_index][timeframe] = accuracy
