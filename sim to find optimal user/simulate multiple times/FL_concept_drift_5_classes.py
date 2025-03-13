@@ -35,7 +35,8 @@ sys.argv = [
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
     '--arrival_rate', '0.5',
-    '--phase', '10', # number of timeframes per phase
+    '--phase', '10', # number of timeframes per phase, there are in total five phases
+    '--sub_phase', '1',
     '--num_runs', '1',
     '--slotted_aloha', 'true',
     '--num_memory_cells', '6'
@@ -56,7 +57,8 @@ parser.add_argument('--gamma_momentum', type=float, nargs='+', default=[0.6], he
 parser.add_argument('--use_memory_matrix', type=str, default='true', help='Switch to use memory matrix (true/false)')
 parser.add_argument('--user_data_size', type=int, default=2000, help='Number of samples each user gets')
 parser.add_argument('--arrival_rate', type=float, default=0.5,help='Arrival rate of new information')
-parser.add_argument('--phase', type=int, default=5,help='When concept drift happens')
+parser.add_argument('--phase', type=int, default=5,help='When concept drift happens, when distribution change from one Class to another')
+parser.add_argument('--sub_phase', type=int, default=1,help='There are many sub_phases in a phase, this is when a user has a probability to obtain new data')
 parser.add_argument('--num_runs', type=int, default=5,help='Number of simulations')
 parser.add_argument('--slotted_aloha', type=str, default='true',help='Whether we use Slotted aloha in the simulation')
 parser.add_argument('--num_memory_cells', type=int, default=6,help='Number of memory cells per client')
@@ -79,6 +81,7 @@ user_data_size = args.user_data_size
 tx_prob = args.transmission_probability
 arrival_rate = args.arrival_rate
 phase = args.phase
+sub_phase = args.sub_phase
 num_runs = args.num_runs
 slotted_aloha = args.slotted_aloha
 num_memory_cells = args.num_memory_cells
@@ -520,7 +523,7 @@ for run in range(num_runs):
             print(f"******** Timeframe {timeframe + 1} ********")
 
             # Check if it is time for drift to happen
-            if (timeframe + 1) % phase == 0:
+            if (timeframe + 1) % sub_phase == 0:
                 train_data_X, train_data_Y, user_new_info_dict = apply_concept_drift(train_data_X, train_data_Y, 
                                                                                      num_users, x_train, y_train, arrival_rate, 
                                                                                      timeframe, cell_size, num_memory_cells)
