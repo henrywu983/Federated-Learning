@@ -14,7 +14,6 @@ class FederatedLearning:
         self.device = device
         self.user_new_info_dict = user_new_info_dict
 
-    # NOT DONE
     def simulate_fl_round_genie_aided(self):
         """Handles both Slotted ALOHA and standard user processing."""
         sum_terms = [torch.zeros_like(param).to(self.device) for param in self.w_before_train]
@@ -35,9 +34,17 @@ class FederatedLearning:
             print(f"Number of distinct clients: {num_distinct_users}")
         
         else:
-            for user_id in range(self.num_users):
+            if self.num_users < 3:
+                raise ValueError("Number of users must be at least 3 to ensure proper selection.")
+
+            # Sort users by the amount of new data (highest first) and pick the top 3
+            sorted_users = sorted(self.user_new_info_dict.keys(), key=lambda u: self.user_new_info_dict[u], reverse=True)
+            selected_users = sorted_users[:3]
+
+            for user_id in selected_users:
                 sum_terms = [sum_terms[j] + self.sparse_gradient[user_id][j] for j in range(len(sum_terms))]
                 packets_received += 1
+                distinct_users.add(user_id)
 
             num_distinct_users = self.num_users
             print(f"Number of distinct clients: {num_distinct_users} (No Slotted ALOHA)")
