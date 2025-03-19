@@ -225,11 +225,14 @@ def partition_data_per_user(x_data, y_data, pattern, num_users, cell_size):
 
 # Concept drift function
 def apply_concept_drift(train_data_X, train_data_Y, num_users, x_train, y_train, arrival_rate, timeframe, cell_size, num_memory_cells):
-    user_new_info_dict = {user: False for user in range(num_users)}
 
     # Calculate which phase we are in (aka what class should be injected)
-    current_phase = (timeframe + 1) // phase - 1
+    current_phase = (timeframe + 1) // phase
     print(f"Apply concept drift --> Phase {current_phase}, Inject Class {current_phase}")
+
+    # Reset user_new_info_dict when a new phase begins
+    if (timeframe + 1) % phase == 1:  # First timeframe of a new phase
+        user_new_info_dict = {user: 0 for user in range(num_users)}
 
     # For sampling new data from the global pool, get indices for the new_class
     global_indices = np.where(np.isin(y_train, class_mappings[current_phase]))[0]
@@ -245,7 +248,7 @@ def apply_concept_drift(train_data_X, train_data_Y, num_users, x_train, y_train,
         cells_Y = np.split(train_data_Y[user], num_memory_cells, axis=0)
 
         if np.random.rand() < arrival_rate:
-            user_new_info_dict[user] = True
+            user_new_info_dict[user] += 1
             # move the data from cell (i-1) into cell i.
             for cell in range(num_memory_cells - 1, 0, -1):
                 cells_X[cell] = cells_X[cell - 1]
@@ -258,14 +261,12 @@ def apply_concept_drift(train_data_X, train_data_Y, num_users, x_train, y_train,
             else:
                 sampled_indices = np.random.choice(global_indices, cell_size, replace=False)
             cells_X[0] = x_train[sampled_indices]
-            cells_Y[0] = y_train[sampled_indices]
-        else:
-            user_new_info_dict[user] = False
+            cells_Y[0] = y_train[sampled_indices]    
             
         new_memory_X[user] = cells_X
         new_memory_Y[user] = cells_Y
 
-    new_stale_data_info[run][seed_index][current_phase] = user_new_info_dict.copy()
+    new_stale_data_info[run][seed_index][timeframe] = user_new_info_dict.copy()
 
     updated_train_data_X = {}
     updated_train_data_Y = {}
@@ -476,10 +477,7 @@ correctly_received_packets_stats = {
 
 new_stale_data_info = {
     run: {
-        seed_index:{
-            Phase: {}
-            for Phase in range(num_timeframes // phase)
-        }
+        seed_index: {timeframe: None for timeframe in range(num_timeframes)}
         for seed_index in range(len(seeds_for_avg))
     }
     for run in range(num_runs)
@@ -946,23 +944,27 @@ new_stale_data_info_file_path = os.path.join(save_dir, 'new_stale_data_info.csv'
 # Open the file in write mode
 with open(new_stale_data_info_file_path, 'w') as f:
     # Write the header row
-    header = "Run,Seed,Phase," + ",".join([f"User_{i}" for i in range(num_users)]) + "\n"
+    header = "Run,Seed,Timeframe," + ",".join([f"User_{i}" for i in range(num_users)]) + "\n"
     f.write(header)
+
     # Write the data
     for run in range(num_runs):
         for seed_idx in range(len(seeds_for_avg)):
-            for phase in range(num_timeframes // phase):
+            for timeframe in range(num_timeframes):  # Iterate directly over timeframes
                 # Create the row
-                row = f"{run},{seed_idx},{phase}"
-                # Get the user data for this phase (if it exists)
-                phase_data = new_stale_data_info[run][seed_idx][phase]
+                row = f"{run},{seed_idx},{timeframe}"
+
+                # Get the user data for this timeframe (if it exists)
+                timeframe_data = new_stale_data_info[run][seed_idx][timeframe]
+
                 # Add user data
-                if phase_data:  # If we have data for this phase
+                if timeframe_data:  # If we have data for this timeframe
                     for user in range(num_users):
-                        value = "1" if phase_data.get(user, False) else "0"
+                        value = str(timeframe_data.get(user, 0))  # Store actual drift count
                         row += f",{value}"
-                else:  # If no data for this phase, fill with zeros
+                else:  # If no data for this timeframe, fill with zeros
                     row += "," + ",".join(["0"] * num_users)
+
                 f.write(row + "\n")
 print(f"User's data status per phase is saved to: {new_stale_data_info_file_path}")
 
