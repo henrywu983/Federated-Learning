@@ -30,14 +30,13 @@ sys.argv = [
     '--fraction', '0.1',
     '--transmission_probability', '0.1',
     '--num_slots', '10',
-    '--num_timeframes', '154', # (phase * 5) + 4
+    '--num_timeframes', '79', # (phase * 5) + 4
     '--user_data_size', '1500',
     '--seeds', '56',# '3', '29', '85', '65',
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
     '--arrival_rate', '0.5',
-    '--phase', '30', # number of timeframes per phase, there are in total five phases
-    '--sub_phase', '1',
+    '--phase', '15', # number of timeframes per phase, there are in total five phases
     '--num_runs', '1',
     '--slotted_aloha', 'false', # for the NeurIPS paper, we don't consider random access channel
     '--num_memory_cells', '6',
@@ -60,7 +59,6 @@ parser.add_argument('--use_memory_matrix', type=str, default='true', help='Switc
 parser.add_argument('--user_data_size', type=int, default=2000, help='Number of samples each user gets')
 parser.add_argument('--arrival_rate', type=float, default=0.5,help='Arrival rate of new information')
 parser.add_argument('--phase', type=int, default=5,help='When concept drift happens, when distribution change from one Class to another')
-parser.add_argument('--sub_phase', type=int, default=1,help='So that every timeframe each user use the apply_concept_drift function')
 parser.add_argument('--num_runs', type=int, default=5,help='Number of simulations')
 parser.add_argument('--slotted_aloha', type=str, default='true',help='Whether we use Slotted aloha in the simulation')
 parser.add_argument('--num_memory_cells', type=int, default=6,help='Number of memory cells per client')
@@ -84,7 +82,6 @@ user_data_size = args.user_data_size
 tx_prob = args.transmission_probability
 arrival_rate = args.arrival_rate
 phase = args.phase
-sub_phase = args.sub_phase
 num_runs = args.num_runs
 slotted_aloha = args.slotted_aloha
 num_memory_cells = args.num_memory_cells
@@ -224,15 +221,11 @@ def partition_data_per_user(x_data, y_data, pattern, num_users, cell_size):
     return user_data
 
 # Concept drift function
-def apply_concept_drift(train_data_X, train_data_Y, num_users, x_train, y_train, arrival_rate, timeframe, cell_size, num_memory_cells):
+def apply_concept_drift(train_data_X, train_data_Y, num_users, x_train, y_train, arrival_rate, timeframe, cell_size, num_memory_cells, user_new_info_dict):
 
     # Calculate which phase we are in (aka what class should be injected)
     current_phase = (timeframe + 1) // phase
     print(f"Apply concept drift --> Phase {current_phase}, Inject Class {current_phase}")
-
-    # Reset user_new_info_dict when a new phase begins
-    if (timeframe + 1) % phase == 1:  # First timeframe of a new phase
-        user_new_info_dict = {user: 0 for user in range(num_users)}
 
     # For sampling new data from the global pool, get indices for the new_class
     global_indices = np.where(np.isin(y_train, class_mappings[current_phase]))[0]
@@ -531,11 +524,13 @@ for run in range(num_runs):
         for timeframe in range(num_timeframes):
             print(f"******** Timeframe {timeframe + 1} ********")
 
-            # Check if it is time for drift to happen
-            if (timeframe + 1) % sub_phase == 0:
-                train_data_X, train_data_Y, user_new_info_dict = apply_concept_drift(train_data_X, train_data_Y, 
-                                                                                     num_users, x_train, y_train, arrival_rate, 
-                                                                                     timeframe, cell_size, num_memory_cells)
+            # Reset user_new_info_dict when a new phase begins
+            if (timeframe + 1) % phase == 1 or (timeframe + 1) == 1:  # First timeframe of a new phase
+                user_new_info_dict = {user: 0 for user in range(num_users)}
+
+            train_data_X, train_data_Y, user_new_info_dict = apply_concept_drift(train_data_X, train_data_Y, 
+                                                                                 num_users, x_train, y_train, arrival_rate, 
+                                                                                 timeframe, cell_size, num_memory_cells, user_new_info_dict)
 
             if timeframe > 0:
                 model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), new_weights)})
@@ -644,7 +639,7 @@ for run in range(num_runs):
 
             model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), new_weights)})
 
-            per_class_accuracies, accuracy = evaluate_per_class_accuracy(model, testloader, device, timeframe + 1, num_classes=5)
+            per_class_accuracies, accuracy = evaluate_per_class_accuracy(model, testloader, device, num_classes=5)
             
             # Evaluate with additional metrics and save the results
             conf_matrix, f1 = evaluate_with_metrics(model, testloader, device, timeframe + 1, num_classes=5)
