@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from collections import Counter
 import random as rnd
 from sklearn.metrics import confusion_matrix, f1_score
+from FL_setting_NeurIPS import FederatedLearning
 
 # Start time
 start_time = time.time()
@@ -29,17 +30,18 @@ sys.argv = [
     '--fraction', '0.1',
     '--transmission_probability', '0.1',
     '--num_slots', '10',
-    '--num_timeframes', '54', # (phase * 5) + 4
-    '--user_data_size', '1000',
-    '--seeds', '56', '3', '29', '85', '65',
+    '--num_timeframes', '154', # (phase * 5) + 4
+    '--user_data_size', '1500',
+    '--seeds', '56',# '3', '29', '85', '65',
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
     '--arrival_rate', '0.5',
     '--phase', '30', # number of timeframes per phase, there are in total five phases
     '--sub_phase', '1',
-    '--num_runs', '5',
-    '--slotted_aloha', 'true',
-    '--num_memory_cells', '6'
+    '--num_runs', '1',
+    '--slotted_aloha', 'false', # for the NeurIPS paper, we don't consider random access channel
+    '--num_memory_cells', '6',
+    '--selected_mode', 'vanilla'
 ]
 
 # Command-line arguments
@@ -58,10 +60,11 @@ parser.add_argument('--use_memory_matrix', type=str, default='true', help='Switc
 parser.add_argument('--user_data_size', type=int, default=2000, help='Number of samples each user gets')
 parser.add_argument('--arrival_rate', type=float, default=0.5,help='Arrival rate of new information')
 parser.add_argument('--phase', type=int, default=5,help='When concept drift happens, when distribution change from one Class to another')
-parser.add_argument('--sub_phase', type=int, default=1,help='There are many sub_phases in a phase, this is when a user has a probability to obtain new data')
+parser.add_argument('--sub_phase', type=int, default=1,help='So that every timeframe each user use the apply_concept_drift function')
 parser.add_argument('--num_runs', type=int, default=5,help='Number of simulations')
 parser.add_argument('--slotted_aloha', type=str, default='true',help='Whether we use Slotted aloha in the simulation')
 parser.add_argument('--num_memory_cells', type=int, default=6,help='Number of memory cells per client')
+parser.add_argument('--selected_mode', type=str, default='vanilla',help='Which setting we are using: genie_aided, vanilla, user_selection')
 
 args = parser.parse_args()
 
@@ -85,6 +88,7 @@ sub_phase = args.sub_phase
 num_runs = args.num_runs
 slotted_aloha = args.slotted_aloha
 num_memory_cells = args.num_memory_cells
+selected_mode = args.selected_mode
 
 # Device configuration
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -221,7 +225,7 @@ def partition_data_per_user(x_data, y_data, pattern, num_users, cell_size):
 
 # Concept drift function
 def apply_concept_drift(train_data_X, train_data_Y, num_users, x_train, y_train, arrival_rate, timeframe, cell_size, num_memory_cells):
-    user_new_info_dict = {}
+    user_new_info_dict = {user: False for user in range(num_users)}
 
     # Calculate which phase we are in (aka what class should be injected)
     current_phase = (timeframe + 1) // phase - 1
@@ -376,21 +380,12 @@ def evaluate_with_metrics(model, testloader, device, timeframe, num_classes=5,
     # Compute confusion matrix and weighted F1 score
     conf_matrix = confusion_matrix(all_labels, all_preds)
     f1 = f1_score(all_labels, all_preds, average='weighted')
-    
-    # Create directories if they don't exist
-    os.makedirs(conf_matrix_dir, exist_ok=True)
-    os.makedirs(f1_dir, exist_ok=True)
-    
-    # Save the confusion matrix to a file, using comma as delimiter for CSV format
-    conf_matrix_filename = os.path.join(conf_matrix_dir, f'conf_matrix_timeframe_{timeframe}.txt')
-    np.savetxt(conf_matrix_filename, conf_matrix, fmt='%d', delimiter=',')
-    
-    # Save the F1 score to a file
-    f1_filename = os.path.join(f1_dir, f'f1_timeframe_{timeframe}.txt')
-    with open(f1_filename, 'w') as f:
-        f.write(f'F1 Score (weighted) for timeframe {timeframe}: {f1:.4f}\n')
-    
-    return conf_matrix, f1
+
+    # Normalize the confusion matrix by rows (actual class)
+    conf_matrix_normalized = conf_matrix.astype('float') / conf_matrix.sum(axis=1, keepdims=True)
+    conf_matrix_normalized = np.nan_to_num(conf_matrix_normalized)  # handles division by zero
+
+    return conf_matrix_normalized, f1
 
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
@@ -445,6 +440,22 @@ accuracy_distributions_class_3 = {
 }
 
 accuracy_distributions_class_4 = {
+    run: {
+        seed_index: {timeframe: None for timeframe in range(num_timeframes)}
+        for seed_index in range(len(seeds_for_avg))
+    }
+    for run in range(num_runs)
+}
+
+conf_matrix_stats = {
+    run: {
+        seed_index: {timeframe: None for timeframe in range(num_timeframes)}
+        for seed_index in range(len(seeds_for_avg))
+    }
+    for run in range(num_runs)
+}
+
+f1_stats = {
     run: {
         seed_index: {timeframe: None for timeframe in range(num_timeframes)}
         for seed_index in range(len(seeds_for_avg))
@@ -620,29 +631,13 @@ for run in range(num_runs):
 
             user_gradients.sort(key=lambda x: x[1], reverse=True)
 
-            sum_terms = [torch.zeros_like(param).to(device) for param in w_before_train]
-            packets_received = 0
-            distinct_users = set()
+            # Initialize FL system
+            fl_system = FederatedLearning(
+            selected_mode, slotted_aloha, num_users, num_slots, sparse_gradient, tx_prob, w_before_train, device, user_new_info_dict
+            )
 
-            if slotted_aloha == 'true':
-                for _ in range(num_slots):
-                    successful_users = simulate_transmissions(num_users, tx_prob)
-                    if successful_users:
-                        success_user = successful_users[0]
-                        if success_user not in distinct_users:
-                            sum_terms = [sum_terms[j] + sparse_gradient[success_user][j] for j in range(len(sum_terms))]
-                            packets_received += 1
-                            distinct_users.add(success_user)
-
-                num_distinct_users = len(distinct_users)
-                print(f"Number of distinct clients: {num_distinct_users}")
-            else:
-                for user_id in range(num_users):
-                    sum_terms = [sum_terms[j] + sparse_gradient[user_id][j] for j in range(len(sum_terms))]
-                    packets_received += 1
-
-                num_distinct_users = num_users
-                print(f"Number of distinct clients: {num_distinct_users} (No Slotted ALOHA)")
+            # Run the FL mode and get updated weights
+            sum_terms, packets_received, num_distinct_users = fl_system.run()
 
             if num_distinct_users > 0:
                 new_weights = [w_before_train[i] + sum_terms[i] / num_distinct_users for i in range(len(w_before_train))]
@@ -651,7 +646,7 @@ for run in range(num_runs):
 
             model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), new_weights)})
 
-            per_class_accuracies, accuracy = evaluate_per_class_accuracy(model, testloader, device, num_classes=5)
+            per_class_accuracies, accuracy = evaluate_per_class_accuracy(model, testloader, device, timeframe + 1, num_classes=5)
             
             # Evaluate with additional metrics and save the results
             conf_matrix, f1 = evaluate_with_metrics(model, testloader, device, timeframe + 1, num_classes=5)
@@ -663,6 +658,9 @@ for run in range(num_runs):
             accuracy_distributions_class_2[run][seed_index][timeframe] = per_class_accuracies[2]
             accuracy_distributions_class_3[run][seed_index][timeframe] = per_class_accuracies[3]
             accuracy_distributions_class_4[run][seed_index][timeframe] = per_class_accuracies[4]
+
+            conf_matrix_stats[run][seed_index][timeframe] = conf_matrix
+            f1_stats[run][seed_index][timeframe] = f1
 
             # Calculate the update to the weights
             weight_update = [new_weights[i] - w_before_train[i] for i in range(len(w_before_train))]
@@ -896,6 +894,37 @@ with open(distributions_class_4_file_path, 'w') as f:
                 accuracy = accuracy_distributions_class_4[run][seed_index][timeframe]  # Adjust indexing to exclude num_active_users
                 f.write(f'{run},{seed},{timeframe + 1},{accuracy}\n')
 print(f"Accuracy distributions saved to: {distributions_class_4_file_path}")
+
+# Confusion matrix
+conf_matrix_file_path = os.path.join(save_dir, 'confusion_matrix_distributions.csv')
+with open(conf_matrix_file_path, 'w') as f:
+    # Write CSV header
+    f.write('Run,Seed,Timeframe,Confusion_Matrix\n')
+    
+    for run in conf_matrix_stats:
+        for seed_index in conf_matrix_stats[run]:
+            for timeframe in conf_matrix_stats[run][seed_index]:
+                # When saving the confusion matrix we have to flatten it first, when analyzing remember to restore it
+                conf_matrix_flat = np.array(conf_matrix_stats[run][seed_index][timeframe]).flatten()
+                conf_matrix_str = ','.join(map(str, conf_matrix_flat))
+                f.write(f'{run},{seed_index},{timeframe + 1},{conf_matrix_str}\n')
+
+print(f"Confusion matrices saved to: {conf_matrix_file_path}")
+
+# F1 score
+f1_file_path = os.path.join(save_dir, 'f1_score_distributions.csv')
+with open(f1_file_path, 'w') as f:
+    # Write the header row
+    f.write('Run,Seed,Timeframe,F1_Score\n')
+
+    # Write the data rows
+    for run in range(num_runs):
+        for seed_index, seed in enumerate(seeds_for_avg):
+            for timeframe in range(num_timeframes):
+                f1_score_val = f1_stats[run][seed_index][timeframe]
+                f.write(f'{run},{seed},{timeframe + 1},{f1_score:.4f}\n')
+
+print(f"F1 score distributions saved to: {f1_file_path}")
 
 # Save correctly received packets statistics to CSV
 packets_stats_file_path = os.path.join(save_dir, 'correctly_received_packets_stats.csv')
