@@ -46,7 +46,7 @@ class FederatedLearning:
                 packets_received += 1
                 distinct_users.add(user_id)
 
-            num_distinct_users = self.num_users
+            num_distinct_users = len(distinct_users)
             print(f"Number of distinct clients: {num_distinct_users} (No Slotted ALOHA)")
 
         return sum_terms, packets_received, num_distinct_users
@@ -82,7 +82,7 @@ class FederatedLearning:
                 packets_received += 1
                 distinct_users.add(user_id)
 
-            num_distinct_users = self.num_users
+            num_distinct_users = len(distinct_users)
             print(f"Number of distinct clients: {num_distinct_users} (No Slotted ALOHA)")
 
         return sum_terms, packets_received, num_distinct_users
@@ -112,7 +112,7 @@ class FederatedLearning:
                 sum_terms = [sum_terms[j] + self.sparse_gradient[user_id][j] for j in range(len(sum_terms))]
                 packets_received += 1
 
-            num_distinct_users = self.num_users
+            num_distinct_users = len(distinct_users)
             print(f"Number of distinct clients: {num_distinct_users} (No Slotted ALOHA)")
 
         return sum_terms, packets_received, num_distinct_users
