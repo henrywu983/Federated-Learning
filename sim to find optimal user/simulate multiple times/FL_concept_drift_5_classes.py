@@ -30,7 +30,7 @@ sys.argv = [
     '--fraction', '0.1',
     '--transmission_probability', '0.1',
     '--num_slots', '10',
-    '--num_timeframes', '74',
+    '--num_timeframes', '128',
     '--user_data_size', '1500',
     '--seeds', '56',# '3', '29', '85', '65',
     '--gamma_momentum', '0',
@@ -227,9 +227,8 @@ def partition_data_per_user(x_data, y_data, pattern, num_users, cell_size):
 def apply_concept_drift(train_data_X, train_data_Y, num_users, x_train, y_train, arrival_rate, timeframe, cell_size, num_memory_cells, user_new_info_dict):
 
     # Calculate which phase we are in (aka what class should be injected)
-    current_phase = (timeframe + 1) // phase
-    if current_phase > 4:
-        current_phase = current_phase % num_classes
+    current_phase = (timeframe) // phase % len(class_mappings)
+    print(f"[DEBUG] current_phase = {current_phase}")
     print(f"Apply concept drift --> Phase {current_phase}, Inject Class {current_phase}")
 
     # For sampling new data from the global pool, get indices for the new_class
@@ -331,7 +330,7 @@ def evaluate_per_class_accuracy(model, testloader, device, num_classes=5):
         overall_accuracy = 100 * total_correct / total_samples if total_samples > 0 else 0
     return accuracies, overall_accuracy
 
-def evaluate_with_metrics(model, testloader, device, timeframe, num_classes=5, 
+def evaluate_with_metrics(model, testloader, device, 
                           conf_matrix_dir='conf_matrices', f1_dir='f1_scores'):
     """
     Evaluate the model on the test set, compute a confusion matrix and F1 score,
@@ -539,7 +538,7 @@ for run in range(num_runs):
             print(f"******** Timeframe {timeframe + 1} ********")
 
             # Reset user_new_info_dict when a new phase begins
-            if (timeframe + 1) % phase == 1 or (timeframe + 1) == 1:  # First timeframe of a new phase
+            if timeframe % phase == 0:
                 user_new_info_dict = {user: 0 for user in range(num_users)}
 
             train_data_X, train_data_Y, user_new_info_dict = apply_concept_drift(train_data_X, train_data_Y, 
@@ -580,10 +579,7 @@ for run in range(num_runs):
             # ------------- Begin User Training Loop -------------
             user_gradients = []
             for user_id in range(num_users):
-                if (timeframe + 1) % phase == 0:
-                    print(f"User: {user_id + 1} ({user_new_info_dict[user_id]})")
-                else:
-                    print(f"User: {user_id + 1}")
+                print(f"User: {user_id + 1}")
 
                 # Reset model weights to the initial weights before each user's local training
                 model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), w_before_train)})
@@ -656,7 +652,7 @@ for run in range(num_runs):
             per_class_accuracies, accuracy = evaluate_per_class_accuracy(model, testloader, device, num_classes=5)
             
             # Evaluate with additional metrics and save the results
-            conf_matrix, f1_across_class, f1_per_class = evaluate_with_metrics(model, testloader, device, timeframe + 1, num_classes=5)
+            conf_matrix, f1_across_class, f1_per_class = evaluate_with_metrics(model, testloader, device)
 
             # Store results and check if this is the best accuracy so far
             accuracy_distributions[run][seed_index][timeframe] = accuracy
