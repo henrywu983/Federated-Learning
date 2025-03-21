@@ -35,12 +35,13 @@ sys.argv = [
     '--seeds', '56',# '3', '29', '85', '65',
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
-    '--arrival_rate', '0.5',
+    '--arrival_rate', '0.25',
     '--phase', '15', # number of timeframes per phase, there are in total five phases
     '--num_runs', '1',
     '--slotted_aloha', 'false', # for the NeurIPS paper, we don't consider random access channel
     '--num_memory_cells', '6',
-    '--selected_mode', 'vanilla'
+    '--selected_mode', 'vanilla',
+    '--cycle', '2'
 ]
 
 # Command-line arguments
@@ -63,6 +64,7 @@ parser.add_argument('--num_runs', type=int, default=5,help='Number of simulation
 parser.add_argument('--slotted_aloha', type=str, default='true',help='Whether we use Slotted aloha in the simulation')
 parser.add_argument('--num_memory_cells', type=int, default=6,help='Number of memory cells per client')
 parser.add_argument('--selected_mode', type=str, default='vanilla',help='Which setting we are using: genie_aided, vanilla, user_selection')
+parser.add_argument('--cycle', type=int, default=1,help='Number of cycles')
 
 args = parser.parse_args()
 
@@ -86,6 +88,7 @@ num_runs = args.num_runs
 slotted_aloha = args.slotted_aloha
 num_memory_cells = args.num_memory_cells
 selected_mode = args.selected_mode
+cycle = args.cycle
 
 # Device configuration
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -225,6 +228,8 @@ def apply_concept_drift(train_data_X, train_data_Y, num_users, x_train, y_train,
 
     # Calculate which phase we are in (aka what class should be injected)
     current_phase = (timeframe + 1) // phase
+    if current_phase > 4:
+        current_phase = current_phase % num_classes
     print(f"Apply concept drift --> Phase {current_phase}, Inject Class {current_phase}")
 
     # For sampling new data from the global pool, get indices for the new_class
@@ -374,12 +379,13 @@ def evaluate_with_metrics(model, testloader, device, timeframe, num_classes=5,
     # Compute confusion matrix and weighted F1 score
     conf_matrix = confusion_matrix(all_labels, all_preds)
     f1 = f1_score(all_labels, all_preds, average='weighted')
+    f1_per_class = f1_score(all_labels, all_preds, average=None)
 
     # Normalize the confusion matrix by rows (actual class)
     conf_matrix_normalized = conf_matrix.astype('float') / conf_matrix.sum(axis=1, keepdims=True)
     conf_matrix_normalized = np.nan_to_num(conf_matrix_normalized)  # handles division by zero
 
-    return conf_matrix_normalized, f1
+    return conf_matrix_normalized, f1, f1_per_class
 
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
@@ -450,6 +456,14 @@ conf_matrix_stats = {
 }
 
 f1_stats = {
+    run: {
+        seed_index: {timeframe: None for timeframe in range(num_timeframes)}
+        for seed_index in range(len(seeds_for_avg))
+    }
+    for run in range(num_runs)
+}
+
+f1_per_class_stats = {
     run: {
         seed_index: {timeframe: None for timeframe in range(num_timeframes)}
         for seed_index in range(len(seeds_for_avg))
@@ -642,7 +656,7 @@ for run in range(num_runs):
             per_class_accuracies, accuracy = evaluate_per_class_accuracy(model, testloader, device, num_classes=5)
             
             # Evaluate with additional metrics and save the results
-            conf_matrix, f1 = evaluate_with_metrics(model, testloader, device, timeframe + 1, num_classes=5)
+            conf_matrix, f1_across_class, f1_per_class = evaluate_with_metrics(model, testloader, device, timeframe + 1, num_classes=5)
 
             # Store results and check if this is the best accuracy so far
             accuracy_distributions[run][seed_index][timeframe] = accuracy
@@ -653,7 +667,8 @@ for run in range(num_runs):
             accuracy_distributions_class_4[run][seed_index][timeframe] = per_class_accuracies[4]
 
             conf_matrix_stats[run][seed_index][timeframe] = conf_matrix
-            f1_stats[run][seed_index][timeframe] = f1
+            f1_stats[run][seed_index][timeframe] = f1_across_class
+            f1_per_class_stats[run][seed_index][timeframe] = f1_per_class
 
             # Calculate the update to the weights
             weight_update = [new_weights[i] - w_before_train[i] for i in range(len(w_before_train))]
@@ -915,9 +930,30 @@ with open(f1_file_path, 'w') as f:
         for seed_index, seed in enumerate(seeds_for_avg):
             for timeframe in range(num_timeframes):
                 f1_score_val = f1_stats[run][seed_index][timeframe]
-                f.write(f'{run},{seed},{timeframe + 1},{f1_score:.4f}\n')
-
+                f.write(f'{run},{seed},{timeframe + 1},{f1_score_val:.4f}\n')
 print(f"F1 score distributions saved to: {f1_file_path}")
+
+# F1 score per class
+f1_file_path = os.path.join(save_dir, 'f1_score_per_class_distributions.csv')
+with open(f1_file_path, 'w') as f:
+    # Write the header row
+    header = 'Run,Seed,Timeframe,' + ','.join([f'F1_Class_{i}' for i in range(num_classes)]) + '\n'
+    f.write(header)
+
+    # Write the data rows
+    for run in range(num_runs):
+        for seed_index, seed in enumerate(seeds_for_avg):
+            for timeframe in range(num_timeframes):
+                f1_score_vals = f1_per_class_stats[run][seed_index][timeframe]
+
+                if isinstance(f1_score_vals, (list, np.ndarray)):
+                    f1_str = ','.join([f'{score:.4f}' for score in f1_score_vals])
+                else:
+                    # fallback: just write a single number
+                    f1_str = f'{f1_score_vals:.4f}'
+
+                f.write(f'{run},{seed},{timeframe + 1},{f1_str}\n')
+print(f"Per-class F1 score distributions saved to: {f1_file_path}")
 
 # Save correctly received packets statistics to CSV
 packets_stats_file_path = os.path.join(save_dir, 'correctly_received_packets_stats.csv')
