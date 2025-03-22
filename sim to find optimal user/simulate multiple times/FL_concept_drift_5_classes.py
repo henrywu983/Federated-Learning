@@ -228,7 +228,6 @@ def apply_concept_drift(train_data_X, train_data_Y, num_users, x_train, y_train,
 
     # Calculate which phase we are in (aka what class should be injected)
     current_phase = (timeframe) // phase % len(class_mappings)
-    print(f"[DEBUG] current_phase = {current_phase}")
     print(f"Apply concept drift --> Phase {current_phase}, Inject Class {current_phase}")
 
     # For sampling new data from the global pool, get indices for the new_class
