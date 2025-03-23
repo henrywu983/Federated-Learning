@@ -30,7 +30,7 @@ sys.argv = [
     '--fraction', '0.1',
     '--transmission_probability', '0.1',
     '--num_slots', '10',
-    '--num_timeframes', '128',
+    '--num_timeframes', '148',
     '--user_data_size', '1500',
     '--seeds', '56',# '3', '29', '85', '65',
     '--gamma_momentum', '0',
