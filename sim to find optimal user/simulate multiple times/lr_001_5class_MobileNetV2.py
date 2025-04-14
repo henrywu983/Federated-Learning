@@ -649,12 +649,21 @@ for run in range(num_runs):
                 X_train_u_tensor = torch.stack([preprocess_image(img) for img in X_train_u]).to(device)
                 Y_train_u_tensor = torch.tensor(Y_train_u).to(device)
 
+                user_dataset = TensorDataset(X_train_u_tensor, Y_train_u_tensor)
+                user_loader = DataLoader(user_dataset, batch_size=16, shuffle=True, num_workers=2)  # You can tune batch_size
+
+                # Train with mini-batches
                 for epoch in range(epochs):
-                    optimizer.zero_grad()                
-                    loss = criterion(model(X_train_u_tensor), Y_train_u_tensor)
-                    loss.backward()
-                    optimizer.step()
-                    torch.cuda.empty_cache()
+                    for xb, yb in user_loader:
+                        xb = xb.to(device)
+                        yb = yb.to(device)
+
+                        optimizer.zero_grad()
+                        outputs = model(xb)
+                        loss = criterion(outputs, yb)
+                        loss.backward()
+                        optimizer.step()
+                        torch.cuda.empty_cache()
 
                 w_after_train = model.state_dict()
                 gradient_diff = calculate_gradient_difference(w_before_train, w_after_train)
