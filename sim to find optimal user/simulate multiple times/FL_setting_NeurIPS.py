@@ -17,7 +17,7 @@ class FederatedLearning:
 
     def simulate_fl_round_genie_aided(self):
         """Handles both Slotted ALOHA and standard user processing."""
-        sum_terms = [torch.zeros_like(param).to(self.device) for param in self.w_before_train.values()]
+        sum_terms = [torch.zeros_like(param).to(self.device) for param in self.w_before_train]
         packets_received = 0
         distinct_users = set()
 
@@ -45,37 +45,7 @@ class FederatedLearning:
             for user_id in selected_users:
                 sum_terms = [sum_terms[j] + self.sparse_gradient[user_id][j] for j in range(len(sum_terms))]
                 packets_received += 1
-                distinct_users.add(user_id)
-
-            # New genie-aided: 
-            # Step 1: Get users who received new data in this round
-            # drifted_users = [user for user, drifted in self.current_round_user_data_info.items() if drifted]
-            
-            # Step 2: Select users
-            # if len(drifted_users) >= 3:
-            #     # Pick top-3 drifted users based on their historical new data count
-            #     sorted_drifted_users = sorted(drifted_users, key=lambda u: self.user_new_info_dict[u], reverse=True)
-            #     selected_users = sorted_drifted_users[:3]
-
-            # else:
-            #     # Use all drifted users first
-            #     selected_users = drifted_users.copy()
-
-            #     # Find candidates from users who didn't get new data this round
-            #     remaining_candidates = [u for u in self.user_new_info_dict.keys() if u not in selected_users]
-
-            #     # Sort remaining candidates by historical new data count
-            #     sorted_remaining = sorted(remaining_candidates, key=lambda u: self.user_new_info_dict[u], reverse=True)
-
-            #     # Fill remaining slots to get 3 users
-            #     num_needed = 3 - len(selected_users)
-            #     selected_users.extend(sorted_remaining[:num_needed])
-
-            # # Step 3: Aggregate gradients
-            # for user_id in selected_users:
-            #     sum_terms = [sum_terms[j] + self.sparse_gradient[user_id][j] for j in range(len(sum_terms))]
-            #     packets_received += 1
-            #     distinct_users.add(user_id)
+                distinct_users.add(user_id)            
             
             num_distinct_users = len(distinct_users)
             print(f"Number of distinct clients: {num_distinct_users} (No Slotted ALOHA)")
@@ -84,7 +54,7 @@ class FederatedLearning:
 
     def simulate_fl_round_vanilla(self):
         """Handles both Slotted ALOHA and standard user processing."""
-        sum_terms = [torch.zeros_like(param).to(self.device) for param in self.w_before_train.values()]
+        sum_terms = [torch.zeros_like(param).to(self.device) for param in self.w_before_train]
         packets_received = 0
         distinct_users = set()
 
@@ -121,7 +91,7 @@ class FederatedLearning:
     # NOT DONE
     def simulate_fl_round_user_selection(self):
         """Handles both Slotted ALOHA and standard user processing."""
-        sum_terms = [torch.zeros_like(param).to(self.device) for param in self.w_before_train.values()]
+        sum_terms = [torch.zeros_like(param).to(self.device) for param in self.w_before_train]
         packets_received = 0
         distinct_users = set()
 
