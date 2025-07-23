@@ -42,7 +42,7 @@ sys.argv = [
     '--num_slots', '10',
     '--num_timeframes', '223',
     '--user_data_size', '1500',
-    '--seeds', '29',# '56', '3', '29', '85', '65',
+    '--seeds', '56', '3', '29', '85', '65',
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
     '--arrival_rate', '0.1',
