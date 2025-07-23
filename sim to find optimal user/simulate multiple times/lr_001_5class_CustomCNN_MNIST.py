@@ -34,16 +34,17 @@ sys.argv = [
     '--num_timeframes', '148',
     '--user_data_size', '1500',
     '--seeds', '56', '3', '29', '85', '65',
-    '--gamma_momentum', '0',
-    '--use_memory_matrix', 'false',
+    '--gamma_momentum', '0.15',
+    '--use_memory_matrix', 'true',
     '--arrival_rate', '0.1',
     '--phase', '10', # number of timeframes per phase, there are in total five phases
     '--num_runs', '5',
     '--slotted_aloha', 'false', # for the NeurIPS paper, we don't consider random access channel
     '--num_memory_cells', '4',
-    '--selected_mode', 'genie_aided',
+    '--selected_mode', 'user_selection_cos_dis',
+    '--cos_similarity', '4',
     '--cycle', '3',
-    '--train_mode', 'conv',
+    '--train_mode', 'dense',
 ]
 
 # Command-line arguments
@@ -65,7 +66,8 @@ parser.add_argument('--phase', type=int, default=5,help='When concept drift happ
 parser.add_argument('--num_runs', type=int, default=5,help='Number of simulations')
 parser.add_argument('--slotted_aloha', type=str, default='true',help='Whether we use Slotted aloha in the simulation')
 parser.add_argument('--num_memory_cells', type=int, default=6,help='Number of memory cells per client')
-parser.add_argument('--selected_mode', type=str, default='vanilla',help='Which setting we are using: genie_aided, vanilla, user_selection')
+parser.add_argument('--selected_mode', type=str, default='vanilla',help='Which setting we are using: genie_aided, vanilla, user_selection_cos, user_selection_cos_dis, user_selection_acc, user_selection_acc_increment, user_selection_aog, user_selection_norm')
+parser.add_argument('--cos_similarity', type=int, default=2,help='What type of cosine similarity we want to test: cos2 = 2, cos4 = 4, ...')
 parser.add_argument('--cycle', type=int, default=1,help='Number of cycles')
 parser.add_argument('--train_mode', type=str, default='all',help='Which part of network we are training: all, dense, conv')
 
@@ -93,17 +95,18 @@ num_memory_cells = args.num_memory_cells
 selected_mode = args.selected_mode
 cycle = args.cycle
 train_mode = args.train_mode
+cos_similarity = args.cos_similarity
 
 # Device configuration
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"\n{'*' * 50}\n*** Using device: {device} ***\n{'*' * 50}\n")
 
 class_mappings = {
-    0: [0, 1],
-    1: [2, 3],
-    2: [4, 5],
-    3: [6, 7],
-    4: [8, 9]
+    0: [9, 6],
+    1: [0, 5],
+    2: [4, 1],
+    3: [8, 7],
+    4: [3, 5]
 }
 
 # Function to map original labels to new classes
@@ -347,6 +350,73 @@ def evaluate_per_class_accuracy(model, testloader, device, num_classes=5):
         overall_accuracy = 100 * total_correct / total_samples if total_samples > 0 else 0
     return accuracies, overall_accuracy
 
+def evaluate_per_label_accuracy(model, testloader, device, num_classes=10):
+    """
+    Evaluate per-label accuracy on CIFAR-10 (original 10 labels, no remapping).
+
+    Args:
+        model (nn.Module): Trained model.
+        testloader (DataLoader): DataLoader for the test dataset.
+        device (torch.device): Device to run evaluation on.
+        num_classes (int): Number of classes (default: 10 for CIFAR-10).
+
+    Returns:
+        dict: Per-label accuracy {label_index: accuracy_percentage}.
+    """
+    model.eval()
+    with torch.no_grad():
+        class_counts = {i: 0 for i in range(num_classes)}
+        class_correct = {i: 0 for i in range(num_classes)}
+
+        for images, labels in testloader:
+            images, labels = images.to(device), labels.to(device)
+
+            outputs = model(images)
+            predictions = outputs.argmax(dim=1)
+
+            for class_idx in range(num_classes):
+                class_mask = (labels == class_idx)
+                class_counts[class_idx] += class_mask.sum().item()
+                class_correct[class_idx] += (predictions[class_mask] == class_idx).sum().item()
+
+        per_label_accuracy = {}
+        for class_idx in range(num_classes):
+            if class_counts[class_idx] > 0:
+                per_label_accuracy[class_idx] = 100 * class_correct[class_idx] / class_counts[class_idx]
+            else:
+                per_label_accuracy[class_idx] = 0.0
+
+            print(f"Accuracy for Label {class_idx}: {per_label_accuracy[class_idx]:.2f}%")
+
+    return per_label_accuracy
+
+def evaluate_user_model_accuracy(model, testloader, device) -> float:
+    """
+    Evaluate the accuracy of a user's model on the shared test set.
+
+    Args:
+        model (nn.Module): The trained model for the user.
+        testloader (DataLoader): The test dataset loader (shared by all users).
+        device (torch.device): The device to run evaluation on.
+
+    Returns:
+        float: Accuracy of the model on the test set.
+    """
+    model.eval()
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for images, labels in testloader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            preds = outputs.argmax(dim=1)
+            correct += (preds == labels).sum().item()
+            total += labels.size(0)
+
+    return correct / total if total > 0 else 0.0
+
+
 def evaluate_with_metrics(model, testloader, device, 
                           conf_matrix_dir='conf_matrices', f1_dir='f1_scores'):
     """
@@ -373,6 +443,9 @@ def evaluate_with_metrics(model, testloader, device,
     all_labels = []
     all_preds = []
     
+    all_labels_original = []
+    all_preds_original = []
+
     with torch.no_grad():
         for images, labels in testloader:
             images = images.to(device)
@@ -381,6 +454,10 @@ def evaluate_with_metrics(model, testloader, device,
             outputs = model(images)
             preds = outputs.argmax(dim=1)
             
+            # For original 10-class stats
+            all_preds_original.extend(preds.cpu().numpy())
+            all_labels_original.extend(labels_np)
+
             # Map both predictions and labels from 10 classes to 5 classes
             mapped_preds = map_to_new_classes(preds.cpu().numpy())
             mapped_labels = map_to_new_classes(labels_np)
@@ -391,17 +468,20 @@ def evaluate_with_metrics(model, testloader, device,
     # Convert lists to numpy arrays for metric computation
     all_preds = np.array(all_preds)
     all_labels = np.array(all_labels)
+    all_preds_original = np.array(all_preds_original)
+    all_labels_original = np.array(all_labels_original)
     
     # Compute confusion matrix and weighted F1 score
     conf_matrix = confusion_matrix(all_labels, all_preds)
     f1 = f1_score(all_labels, all_preds, average='weighted')
     f1_per_class = f1_score(all_labels, all_preds, average=None)
+    f1_per_label = f1_score(all_labels_original, all_preds_original, average=None)
 
     # Normalize the confusion matrix by rows (actual class)
     conf_matrix_normalized = conf_matrix.astype('float') / conf_matrix.sum(axis=1, keepdims=True)
     conf_matrix_normalized = np.nan_to_num(conf_matrix_normalized)  # handles division by zero
 
-    return conf_matrix_normalized, f1, f1_per_class
+    return conf_matrix_normalized, f1, f1_per_class, f1_per_label
 
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
@@ -463,6 +543,14 @@ accuracy_distributions_class_4 = {
     for run in range(num_runs)
 }
 
+accuracy_per_labels = {
+    run: {
+        seed_index: {timeframe: None for timeframe in range(num_timeframes)}
+        for seed_index in range(len(seeds_for_avg))
+    }
+    for run in range(num_runs)
+}
+
 conf_matrix_stats = {
     run: {
         seed_index: {timeframe: None for timeframe in range(num_timeframes)}
@@ -480,6 +568,14 @@ f1_stats = {
 }
 
 f1_per_class_stats = {
+    run: {
+        seed_index: {timeframe: None for timeframe in range(num_timeframes)}
+        for seed_index in range(len(seeds_for_avg))
+    }
+    for run in range(num_runs)
+}
+
+f1_per_label_stats = {
     run: {
         seed_index: {timeframe: None for timeframe in range(num_timeframes)}
         for seed_index in range(len(seeds_for_avg))
@@ -555,6 +651,12 @@ for run in range(num_runs):
 
         memory_matrix = [[torch.zeros_like(param).to(device) for param in w_before_train] for _ in range(num_users)]
 
+        # If we use mode user_selection_acc or user_selection_acc_increment
+        user_accuracies = torch.zeros((1, num_users))
+        user_accuracies_increment = torch.zeros((1, num_users))
+
+        prev_round_global_grad = [torch.zeros_like(param).to(device) for param in w_before_train]
+
         for timeframe in range(num_timeframes):
             print(f"******** Timeframe {timeframe + 1} ********")
 
@@ -569,6 +671,8 @@ for run in range(num_runs):
             if timeframe > 0:
                 model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), new_weights)})
             torch.cuda.empty_cache()
+
+            grad_per_user = [[torch.zeros_like(param).to(device) for param in w_before_train] for _ in range(num_users)]
 
             sparse_gradient = [[torch.zeros_like(param).to(device) for param in w_before_train] for _ in range(num_users)]
 
@@ -627,6 +731,7 @@ for run in range(num_runs):
 
                 w_after_train = [param.data.clone() for param in model.parameters()]
                 gradient_diff = calculate_gradient_difference(w_before_train, w_after_train)
+                grad_per_user[user_id] = gradient_diff
                 gradient_diff_memory = [gradient_diff[j] + memory_matrix[user_id][j] for j in range(len(gradient_diff))]
 
                 if use_memory_matrix:
@@ -651,11 +756,26 @@ for run in range(num_runs):
                     user_gradients.append((user_id, gradient_l2_norm, gradient_diff))
                     loc_grad_mag[run, seed_index, timeframe, user_id] = gradient_l2_norm
 
+                # Evaluate the per user accuracy with its local weights --- This is for user_selection_acc and 
+                if selected_mode == 'user_selection_acc' or selected_mode == 'user_selection_acc_increment':
+                    model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), w_after_train)})
+                    user_accuracy = evaluate_user_model_accuracy(model, testloader, device)
+                    if selected_mode == 'user_selection_acc':
+                        # This is for selecting the top 3 users with the most accuracy
+                        user_accuracies[0][user_id] = user_accuracy
+
+                    elif selected_mode == 'user_selection_acc_increment':
+                        # This is for selecting the top 3 users with the most accuracy increments
+                        user_accuracies_increment[0][user_id] = user_accuracy - user_accuracies[0][user_id]
+                        user_accuracies[0][user_id] = user_accuracy
+
             user_gradients.sort(key=lambda x: x[1], reverse=True)
 
             # Initialize FL system
             fl_system = FederatedLearning(
-            selected_mode, slotted_aloha, num_users, num_slots, sparse_gradient, tx_prob, w_before_train, device, user_new_info_dict, current_round_user_data_info
+            selected_mode, slotted_aloha, num_users, num_slots, sparse_gradient, tx_prob, 
+            w_before_train, device, user_new_info_dict, current_round_user_data_info, prev_round_global_grad, 
+            grad_per_user, cos_similarity, user_accuracies, user_accuracies_increment
             )
 
             # Run the FL mode and get updated weights
@@ -663,15 +783,19 @@ for run in range(num_runs):
 
             if num_distinct_users > 0:
                 new_weights = [w_before_train[i] + sum_terms[i] / num_distinct_users for i in range(len(w_before_train))]
+                prev_round_global_grad = [sum_terms[i] / num_distinct_users for i in range(len(w_before_train))]
             else:
                 new_weights = [param.clone() for param in w_before_train]
 
+            # Updating the global model with the new aggregated weights
             model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), new_weights)})
 
             per_class_accuracies, accuracy = evaluate_per_class_accuracy(model, testloader, device, num_classes=5)
             
+            per_label_accuracy = evaluate_per_label_accuracy(model, testloader, device, num_classes=10)
+
             # Evaluate with additional metrics and save the results
-            conf_matrix, f1_across_class, f1_per_class = evaluate_with_metrics(model, testloader, device)
+            conf_matrix, f1_across_class, f1_per_class, f1_per_label = evaluate_with_metrics(model, testloader, device)
 
             # Store results and check if this is the best accuracy so far
             accuracy_distributions[run][seed_index][timeframe] = accuracy
@@ -680,10 +804,11 @@ for run in range(num_runs):
             accuracy_distributions_class_2[run][seed_index][timeframe] = per_class_accuracies[2]
             accuracy_distributions_class_3[run][seed_index][timeframe] = per_class_accuracies[3]
             accuracy_distributions_class_4[run][seed_index][timeframe] = per_class_accuracies[4]
-
+            accuracy_per_labels[run][seed_index][timeframe] = per_label_accuracy
             conf_matrix_stats[run][seed_index][timeframe] = conf_matrix
             f1_stats[run][seed_index][timeframe] = f1_across_class
             f1_per_class_stats[run][seed_index][timeframe] = f1_per_class
+            f1_per_label_stats[run][seed_index][timeframe] = f1_per_label
 
             # Calculate the update to the weights
             weight_update = [new_weights[i] - w_before_train[i] for i in range(len(w_before_train))]
@@ -699,7 +824,6 @@ for run in range(num_runs):
 
             successful_users_record[run, seed_index, timeframe] = packets_received
 
-            model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), new_weights)})
             w_before_train = new_weights
             torch.cuda.empty_cache()
 
@@ -969,6 +1093,53 @@ with open(f1_file_path, 'w') as f:
 
                 f.write(f'{run},{seed},{timeframe + 1},{f1_str}\n')
 print(f"Per-class F1 score distributions saved to: {f1_file_path}")
+
+# F1 score per label
+f1_label_file_path = os.path.join(save_dir, 'f1_score_per_label_distributions.csv')
+
+# Write the file
+with open(f1_label_file_path, 'w') as f:
+    # Write header
+    header = 'Run,Seed,Timeframe,' + ','.join([f'F1_Label_{i}' for i in range(10)]) + '\n'
+    f.write(header)
+
+    # Write data rows
+    for run in range(num_runs):
+        for seed_index, seed in enumerate(seeds_for_avg):
+            for timeframe in range(num_timeframes):
+                f1_label_vals = f1_per_label_stats[run][seed_index][timeframe]
+
+                if isinstance(f1_label_vals, (list, np.ndarray)):
+                    f1_str = ','.join([f'{score:.4f}' for score in f1_label_vals])
+                else:
+                    # fallback: write a single value
+                    f1_str = f'{f1_label_vals:.4f}'
+
+                f.write(f'{run},{seed},{timeframe + 1},{f1_str}\n')
+
+print(f"Per-label F1 score distributions saved to: {f1_label_file_path}")
+
+# Accuracy per label
+acc_file_path = os.path.join(save_dir, 'accuracy_per_label_distributions.csv')
+with open(acc_file_path, 'w') as f:
+    # Write header row
+    header = 'Run,Seed,Timeframe,' + ','.join([f'Acc_Class_{i}' for i in range(10)]) + '\n'
+    f.write(header)
+
+    # Write data rows
+    for run in range(num_runs):
+        for seed_index, seed in enumerate(seeds_for_avg):
+            for timeframe in range(num_timeframes):
+                acc_vals = accuracy_per_labels[run][seed_index][timeframe]
+
+                if isinstance(acc_vals, dict):
+                    acc_str = ','.join([f'{acc_vals[i]:.4f}' for i in range(10)])
+                else:
+                    acc_str = f'{acc_vals:.4f}'
+
+                f.write(f'{run},{seed},{timeframe + 1},{acc_str}\n')
+
+print(f"Per-label accuracy distributions saved to: {acc_file_path}")
 
 # Save correctly received packets statistics to CSV
 packets_stats_file_path = os.path.join(save_dir, 'correctly_received_packets_stats.csv')
