@@ -439,8 +439,8 @@ def split_train_val(X_user, Y_user, val_ratio=0.2):
     num_samples = len(X_user)
     val_size = int(num_samples * val_ratio)
     indices = np.random.permutation(num_samples)
-    val_idx, train_idx = indices[:val_size], indices[val_size:]
-    return (X_user[train_idx], Y_user[train_idx]), (X_user[val_idx], Y_user[val_idx])
+    val_idx = indices[:val_size], indices[val_size:]
+    return X_user[val_idx], Y_user[val_idx]
 
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
@@ -716,8 +716,7 @@ for run in range(num_runs):
                     if current_round_user_data_info[user_id] or user_val_sets[user_id] is None:
                         if current_round_user_data_info[user_id]:
                             print("New Data Injected: Resample")
-                        (train_X, train_Y), (val_X, val_Y) = split_train_val(train_data_X[user_id], train_data_Y[user_id], val_ratio=0.2)
-                        train_data_X[user_id], train_data_Y[user_id] = train_X, train_Y
+                        val_X, val_Y = split_train_val(train_data_X[user_id], train_data_Y[user_id], val_ratio=0.2)                        
                         user_val_sets[user_id] = (val_X, val_Y)
     
                     # Build DataLoader for validation set
