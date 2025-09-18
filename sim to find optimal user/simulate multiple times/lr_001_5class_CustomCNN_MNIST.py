@@ -34,14 +34,14 @@ sys.argv = [
     '--num_timeframes', '148',
     '--user_data_size', '1500',
     '--seeds', '56', '3', '29', '85', '65',
-    '--gamma_momentum', '0.15',
-    '--use_memory_matrix', 'true',
+    '--gamma_momentum', '0',
+    '--use_memory_matrix', 'false',
     '--arrival_rate', '0.1',
     '--phase', '10', # number of timeframes per phase, there are in total five phases
     '--num_runs', '5',
     '--slotted_aloha', 'false', # for the NeurIPS paper, we don't consider random access channel
     '--num_memory_cells', '4',
-    '--selected_mode', 'user_selection_cos_dis',
+    '--selected_mode', 'user_selection_acc',
     '--cos_similarity', '4',
     '--cycle', '3',
     '--train_mode', 'dense',
@@ -66,7 +66,7 @@ parser.add_argument('--phase', type=int, default=5,help='When concept drift happ
 parser.add_argument('--num_runs', type=int, default=5,help='Number of simulations')
 parser.add_argument('--slotted_aloha', type=str, default='true',help='Whether we use Slotted aloha in the simulation')
 parser.add_argument('--num_memory_cells', type=int, default=6,help='Number of memory cells per client')
-parser.add_argument('--selected_mode', type=str, default='vanilla',help='Which setting we are using: genie_aided, vanilla, user_selection_cos, user_selection_cos_dis, user_selection_acc, user_selection_acc_increment, user_selection_aog, user_selection_norm')
+parser.add_argument('--selected_mode', type=str, default='vanilla',help='Which setting we are using: genie_aided, vanilla, user_selection_cos, user_selection_cos_dis, user_selection_acc, user_selection_acc_increment, user_selection_aoi')
 parser.add_argument('--cos_similarity', type=int, default=2,help='What type of cosine similarity we want to test: cos2 = 2, cos4 = 4, ...')
 parser.add_argument('--cycle', type=int, default=1,help='Number of cycles')
 parser.add_argument('--train_mode', type=str, default='all',help='Which part of network we are training: all, dense, conv')
@@ -483,6 +483,16 @@ def evaluate_with_metrics(model, testloader, device,
 
     return conf_matrix_normalized, f1, f1_per_class, f1_per_label
 
+def split_train_val(X_user, Y_user, val_ratio=0.2):
+    """
+        Randomly split user data into train/val sets.
+        This is for user_selection_acc, and user_selection_acc_increment.        
+    """
+    num_samples = len(X_user)
+    val_size = int(num_samples * val_ratio)
+    indices = np.random.permutation(num_samples)
+    val_idx, train_idx = indices[:val_size], indices[val_size:]
+    return (X_user[train_idx], Y_user[train_idx]), (X_user[val_idx], Y_user[val_idx])
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
 
@@ -652,6 +662,7 @@ for run in range(num_runs):
         memory_matrix = [[torch.zeros_like(param).to(device) for param in w_before_train] for _ in range(num_users)]
 
         # If we use mode user_selection_acc or user_selection_acc_increment
+        user_val_sets = {user_id: None for user_id in range(num_users)}
         user_accuracies = torch.zeros((1, num_users))
         user_accuracies_increment = torch.zeros((1, num_users))
 
@@ -759,13 +770,30 @@ for run in range(num_runs):
                 # Evaluate the per user accuracy with its local weights --- This is for user_selection_acc and 
                 if selected_mode == 'user_selection_acc' or selected_mode == 'user_selection_acc_increment':
                     model.load_state_dict({k: v for k, v in zip(model.state_dict().keys(), w_after_train)})
-                    user_accuracy = evaluate_user_model_accuracy(model, testloader, device)
+
+                    if current_round_user_data_info[user_id] or user_val_sets[user_id] is None:
+                        if current_round_user_data_info[user_id]:
+                            print("New Data Injected: Resample")
+                        (train_X, train_Y), (val_X, val_Y) = split_train_val(train_data_X[user_id], train_data_Y[user_id], val_ratio=0.2)                        
+                        train_data_X[user_id], train_data_Y[user_id] = train_X, train_Y
+                        user_val_sets[user_id] = (val_X, val_Y)
+
+                    # Build DataLoader for validation set (MNIST: grayscale images)
+                    val_X, val_Y = user_val_sets[user_id]
+
+                    val_tensor = torch.tensor(val_X).unsqueeze(1).float() / 255.0
+                    val_Y_tensor = torch.tensor(val_Y)
+
+                    val_dataset = torch.utils.data.TensorDataset(val_tensor, val_Y_tensor)
+                    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+
+                    user_accuracy = evaluate_user_model_accuracy(model, val_loader, device)
                     if selected_mode == 'user_selection_acc':
-                        # This is for selecting the top 3 users with the most accuracy
+                        # This is for selecting the top 3 users with the largest accuracy
                         user_accuracies[0][user_id] = user_accuracy
 
                     elif selected_mode == 'user_selection_acc_increment':
-                        # This is for selecting the top 3 users with the most accuracy increments
+                        # This is for selecting the top 3 users with the largest accuracy increments
                         user_accuracies_increment[0][user_id] = user_accuracy - user_accuracies[0][user_id]
                         user_accuracies[0][user_id] = user_accuracy
 
