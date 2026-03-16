@@ -27,13 +27,13 @@ sys.argv = [
     '--learning_rate', '0.001',
     '--epochs', '6',
     '--batch_size', '64',
-    '--num_users', '10',
+    '--num_users', '15',
     '--fraction', '0.1',
     '--transmission_probability', '0.1',
     '--num_slots', '10',
     '--num_timeframes', '148',
     '--user_data_size', '1500',
-    '--seeds', '56', '3', '29', '85', '65',
+    '--seeds', '65', #'56', '3', '29', '85', '65',
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
     '--arrival_rate', '0.1',
@@ -41,7 +41,7 @@ sys.argv = [
     '--num_runs', '5',
     '--slotted_aloha', 'false', # for the NeurIPS paper, we don't consider random access channel
     '--num_memory_cells', '4',
-    '--selected_mode', 'user_selection_acc',
+    '--selected_mode', 'centralized',
     '--cos_similarity', '4',
     '--cycle', '3',
     '--train_mode', 'dense',
@@ -66,7 +66,7 @@ parser.add_argument('--phase', type=int, default=5,help='When concept drift happ
 parser.add_argument('--num_runs', type=int, default=5,help='Number of simulations')
 parser.add_argument('--slotted_aloha', type=str, default='true',help='Whether we use Slotted aloha in the simulation')
 parser.add_argument('--num_memory_cells', type=int, default=6,help='Number of memory cells per client')
-parser.add_argument('--selected_mode', type=str, default='vanilla',help='Which setting we are using: genie_aided, vanilla, user_selection_cos, user_selection_cos_dis, user_selection_acc, user_selection_acc_increment, user_selection_aoi')
+parser.add_argument('--selected_mode', type=str, default='vanilla',help='Which setting we are using: centralized, genie_aided, vanilla, user_selection_cos, user_selection_cos_dis, user_selection_acc, user_selection_acc_increment, user_selection_aoi')
 parser.add_argument('--cos_similarity', type=int, default=2,help='What type of cosine similarity we want to test: cos2 = 2, cos4 = 4, ...')
 parser.add_argument('--cycle', type=int, default=1,help='Number of cycles')
 parser.add_argument('--train_mode', type=str, default='all',help='Which part of network we are training: all, dense, conv')
@@ -183,7 +183,7 @@ def simulate_transmissions(num_users, transmission_probability):
 def calculate_gradient_difference(w_before, w_after):
     return [w_after[k] - w_before[k] for k in range(len(w_after))]
 
-# Partitioning User Data into Memory Cells
+# Partitioning User Data into Memory Cells (Without Replacement)
 def partition_data_per_user(x_data, y_data, pattern, num_users, cell_size):
     """
     Partition x_data and y_data among num_users, each with memory cells as specified by pattern.
@@ -240,6 +240,34 @@ def partition_data_per_user(x_data, y_data, pattern, num_users, cell_size):
             cell_y = y_data[selected_indices]
             user_data[user_id][cell_idx] = {'x': cell_x, 'y': cell_y}
     
+    return user_data
+
+def partition_data_per_user_withReplacement(x_data, y_data, pattern, num_users, cell_size):
+    """
+    Partition x_data and y_data among num_users, each with memory cells as specified by pattern.
+    Sampling is done from the global class pool independently for each user, so overlap across users is allowed.
+    """
+
+    indices_by_class = {}
+    unique_classes = np.unique(y_data)
+    for cls in unique_classes:
+        indices_by_class[cls] = np.where(y_data == cls)[0]
+
+    user_data = {}
+    for user_id in range(num_users):
+        user_data[user_id] = {}
+        for cell_idx, cell_class in enumerate(pattern):
+            candidate_indices = indices_by_class[cell_class]
+
+            if len(candidate_indices) < cell_size:
+                selected_indices = np.random.choice(candidate_indices, size=cell_size, replace=True)
+            else:
+                selected_indices = np.random.choice(candidate_indices, size=cell_size, replace=False)
+
+            cell_x = x_data[selected_indices]
+            cell_y = y_data[selected_indices]
+            user_data[user_id][cell_idx] = {'x': cell_x, 'y': cell_y}
+
     return user_data
 
 # Concept drift function
@@ -630,8 +658,12 @@ for run in range(num_runs):
 
     cell_size = user_data_size // num_memory_cells 
 
-    # Partition the training data for each user using the defined pattern
-    user_data_memory = partition_data_per_user(x_train, np.array(y_train),
+    # Partition the training data for each user using the defined pattern (Without Replacement)
+    #user_data_memory = partition_data_per_user(x_train, np.array(y_train),
+    #                                           initial_pattern, num_users, cell_size)
+    
+    # Partition the training data for each user using the defined pattern (With Replacement)
+    user_data_memory = partition_data_per_user_withReplacement(x_train, np.array(y_train),
                                                initial_pattern, num_users, cell_size)
     
     # Combine the memory cells for each user into one training set
