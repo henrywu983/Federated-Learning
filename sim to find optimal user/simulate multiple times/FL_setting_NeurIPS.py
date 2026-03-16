@@ -46,6 +46,22 @@ class FederatedLearning:
 
         return (numerator / denominator).item()
     
+    def simulate_fl_round_centralized(self):
+        """All users successfully transmit in this round."""
+        sum_terms = [torch.zeros_like(param).to(self.device) for param in self.w_before_train]
+        packets_received = 0
+        distinct_users = set()
+
+        for user_id in range(self.num_users):
+            sum_terms = [sum_terms[j] + self.sparse_gradient[user_id][j] for j in range(len(sum_terms))]
+            packets_received += 1
+            distinct_users.add(user_id)
+
+        num_distinct_users = len(distinct_users)
+        print(f"Number of distinct clients: {num_distinct_users} (Centralized / All users successful)")
+
+        return sum_terms, packets_received, num_distinct_users
+
     def simulate_fl_round_genie_aided(self):
         """Handles both Slotted ALOHA and standard user processing."""
         sum_terms = [torch.zeros_like(param).to(self.device) for param in self.w_before_train]
@@ -309,6 +325,8 @@ class FederatedLearning:
             return self.user_selection_acc_increment()
         elif self.mode == 'user_selection_cos_dis':
             return self.user_selection_cos_dis()
+        elif self.mode == 'centralized':
+            return self.centralized()
         else:
             raise ValueError(f"Invalid mode: {self.mode}")
 
@@ -335,3 +353,7 @@ class FederatedLearning:
     def user_selection_cos_dis(self):
         print("Running User Selection FL (Cosine DIS-similarity)...")
         return self.simulate_fl_round_user_selection_cos_dis()
+    
+    def centralized(self):
+        print("Running Centralized FL (all users transmit successfully)...")
+        return self.simulate_fl_round_centralized()
