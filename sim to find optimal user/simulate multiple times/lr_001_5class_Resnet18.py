@@ -41,7 +41,7 @@ sys.argv = [
     '--num_runs', '5',
     '--slotted_aloha', 'false', # for the NeurIPS paper, we don't consider random access channel
     '--num_memory_cells', '4',
-    '--selected_mode', 'centralized',
+    '--selected_mode', 'vanilla',
     '--cos_similarity', '2',
     '--cycle', '3',
     '--train_mode', 'dense',
@@ -117,6 +117,30 @@ def map_to_new_classes(original_labels):
             new_labels[original_labels == original_class] = new_class
     return new_labels
 
+# Function to perform offline data augmentation
+def offline_augment_dataset(x_data, y_data, augment_factor=1):
+    augmented_images = []
+    augmented_labels = []
+
+    for _ in range(augment_factor):
+        for i in range(len(x_data)):
+            img = x_data[i]          # shape (32, 32, 3), uint8
+            label = y_data[i]
+
+            aug_img = offline_aug(img)   # tensor in [0,1], shape [3,32,32]
+            aug_img = (aug_img.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+
+            augmented_images.append(aug_img)
+            augmented_labels.append(label)
+
+    augmented_images = np.array(augmented_images)
+    augmented_labels = np.array(augmented_labels)
+
+    x_aug = np.concatenate([x_data, augmented_images], axis=0)
+    y_aug = np.concatenate([y_data, augmented_labels], axis=0)
+
+    return x_aug, y_aug
+
 # CIFAR-10 dataset and preprocessing
 transform = transforms.Compose([
     transforms.Resize(224),  # ResNet18 expects 224x224
@@ -124,9 +148,22 @@ transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406],  # ImageNet stats
                          std=[0.229, 0.224, 0.225])
 ])
+
+offline_aug = transforms.Compose([
+    transforms.ToPILImage(),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomCrop(32, padding=4),
+    transforms.RandomRotation(10),
+    transforms.ToTensor()
+])
+
 trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
 testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
 x_train, y_train = trainset.data, np.array(trainset.targets)
+
+x_train, y_train = offline_augment_dataset(x_train, y_train, augment_factor=1)
+
+print(f"Training pool size after offline augmentation: {len(x_train)}")
 
 assert len(x_train) >= num_users * user_data_size, "Dataset too small for requested user allocation!"
 
@@ -591,12 +628,12 @@ for run in range(num_runs):
     cell_size = user_data_size // num_memory_cells 
 
     # Partition the training data for each user using the defined pattern (Without Replacement)
-    # user_data_memory = partition_data_per_user(x_train, np.array(y_train),
-    #                                           initial_pattern, num_users, cell_size)
+    user_data_memory = partition_data_per_user(x_train, np.array(y_train),
+                                               initial_pattern, num_users, cell_size)
     
     # Partition the training data for each user using the defined pattern (With Replacement)
-    user_data_memory = partition_data_per_user_withReplacement(x_train, np.array(y_train),
-                                               initial_pattern, num_users, cell_size)
+    #user_data_memory = partition_data_per_user_withReplacement(x_train, np.array(y_train),
+    #                                           initial_pattern, num_users, cell_size)
     
     # Combine the memory cells for each user into one training set
     train_data_X = {}
