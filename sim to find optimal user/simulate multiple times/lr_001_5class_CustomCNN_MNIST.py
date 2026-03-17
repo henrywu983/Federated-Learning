@@ -27,22 +27,22 @@ sys.argv = [
     '--learning_rate', '0.001',
     '--epochs', '6',
     '--batch_size', '64',
-    '--num_users', '15',
+    '--num_users', '10',
     '--fraction', '0.1',
     '--transmission_probability', '0.1',
     '--num_slots', '10',
     '--num_timeframes', '148',
     '--user_data_size', '1500',
-    '--seeds', '65', #'56', '3', '29', '85', '65',
+    '--seeds', '56', #'56', '3', '29', '85', '65',
     '--gamma_momentum', '0',
     '--use_memory_matrix', 'false',
     '--arrival_rate', '0.1',
     '--phase', '10', # number of timeframes per phase, there are in total five phases
-    '--num_runs', '5',
-    '--slotted_aloha', 'false', # for the NeurIPS paper, we don't consider random access channel
+    '--num_runs', '5', # 5
+    '--slotted_aloha', 'false', # we don't consider random access channel
     '--num_memory_cells', '4',
-    '--selected_mode', 'centralized',
-    '--cos_similarity', '4',
+    '--selected_mode', 'vanilla',
+    '--cos_similarity', '2',
     '--cycle', '3',
     '--train_mode', 'dense',
 ]
@@ -103,7 +103,7 @@ print(f"\n{'*' * 50}\n*** Using device: {device} ***\n{'*' * 50}\n")
 
 class_mappings = {
     0: [9, 6],
-    1: [0, 5],
+    1: [0, 2],
     2: [4, 1],
     3: [8, 7],
     4: [3, 5]
@@ -117,15 +117,51 @@ def map_to_new_classes(original_labels):
             new_labels[original_labels == original_class] = new_class
     return new_labels
 
+# Data Augmentation
+def offline_augment_dataset(x_data, y_data, augment_factor=1):
+    augmented_images = []
+    augmented_labels = []
+
+    for _ in range(augment_factor):
+        for i in range(len(x_data)):
+            img = x_data[i]
+            label = y_data[i]
+
+            aug_img = offline_aug(img)
+            aug_img = (aug_img.squeeze(0).numpy() * 255).astype(np.uint8)
+
+            augmented_images.append(aug_img)
+            augmented_labels.append(label)
+
+    augmented_images = np.array(augmented_images)
+    augmented_labels = np.array(augmented_labels)
+
+    x_aug = np.concatenate([x_data, augmented_images], axis=0)
+    y_aug = np.concatenate([y_data, augmented_labels], axis=0)
+
+    return x_aug, y_aug
+
 # MNIST dataset and preprocessing
 transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.1307,), (0.3081,))
 ])
+
+offline_aug = transforms.Compose([
+    transforms.ToPILImage(),
+    transforms.RandomRotation(10),
+    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
+    transforms.ToTensor()
+])
+
 trainset = torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform)
 testset = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform)
 x_train = trainset.data.numpy()
 y_train = trainset.targets.numpy()
+
+x_train, y_train = offline_augment_dataset(x_train, y_train, augment_factor=1)
+
+print(f"Training pool size after offline augmentation: {len(x_train)}")
 
 assert len(x_train) >= num_users * user_data_size, "Dataset too small for requested user allocation!"
 
@@ -161,7 +197,7 @@ class MNISTCNN(nn.Module):
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
         return self.fc2(x)
-    
+
 # Sparsify the model weights
 def top_k_sparsificate_model_weights(weights, fraction):
     flat_weights = torch.cat([w.view(-1) for w in weights])
@@ -659,12 +695,12 @@ for run in range(num_runs):
     cell_size = user_data_size // num_memory_cells 
 
     # Partition the training data for each user using the defined pattern (Without Replacement)
-    #user_data_memory = partition_data_per_user(x_train, np.array(y_train),
-    #                                           initial_pattern, num_users, cell_size)
+    user_data_memory = partition_data_per_user(x_train, np.array(y_train),
+                                               initial_pattern, num_users, cell_size)
     
     # Partition the training data for each user using the defined pattern (With Replacement)
-    user_data_memory = partition_data_per_user_withReplacement(x_train, np.array(y_train),
-                                               initial_pattern, num_users, cell_size)
+    # user_data_memory = partition_data_per_user_withReplacement(x_train, np.array(y_train),
+    #                                           initial_pattern, num_users, cell_size)
     
     # Combine the memory cells for each user into one training set
     train_data_X = {}
