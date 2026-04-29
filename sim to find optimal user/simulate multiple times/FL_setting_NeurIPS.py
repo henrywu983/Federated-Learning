@@ -97,7 +97,7 @@ class FederatedLearning:
             num_distinct_users = len(distinct_users)
             print(f"Number of distinct clients: {num_distinct_users} (No Slotted ALOHA)")
 
-        return sum_terms, packets_received, num_distinct_users
+        return sum_terms, packets_received, num_distinct_users, selected_users
 
     def simulate_fl_round_vanilla(self):
         """Handles both Slotted ALOHA and standard user processing."""
@@ -178,7 +178,7 @@ class FederatedLearning:
             num_distinct_users = len(distinct_users)
             print(f"Number of distinct clients: {num_distinct_users} (No Slotted ALOHA)")
 
-        return sum_terms, packets_received, num_distinct_users
+        return sum_terms, packets_received, num_distinct_users, selected_users
 
 # Compute cos DIS-similarities and select top-3 users with least values
     def simulate_fl_round_user_selection_cos_dis(self):
