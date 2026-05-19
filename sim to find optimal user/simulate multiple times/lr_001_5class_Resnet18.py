@@ -812,7 +812,7 @@ for run in range(num_runs):
             fl_system = FederatedLearning(
             selected_mode, slotted_aloha, num_users, num_slots, sparse_gradient, tx_prob, 
             w_before_train, device, user_new_info_dict, current_round_user_data_info, prev_round_global_grad, 
-            grad_per_user, cos_similarity, user_accuracies, user_accuracies_increment
+            grad_per_user, cos_similarity, softmax_beta=8.0
             )
 
             # Run the FL mode and get updated weights
