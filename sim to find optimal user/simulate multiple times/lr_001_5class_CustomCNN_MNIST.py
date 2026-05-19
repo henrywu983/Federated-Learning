@@ -41,7 +41,7 @@ sys.argv = [
     '--num_runs', '5', # 5
     '--slotted_aloha', 'false', # we don't consider random access channel
     '--num_memory_cells', '4',
-    '--selected_mode', 'genie_aided',
+    '--selected_mode', 'user_selection_cos',
     '--cos_similarity', '2',
     '--cycle', '3',
     '--train_mode', 'dense',
@@ -66,7 +66,7 @@ parser.add_argument('--phase', type=int, default=5,help='When concept drift happ
 parser.add_argument('--num_runs', type=int, default=5,help='Number of simulations')
 parser.add_argument('--slotted_aloha', type=str, default='true',help='Whether we use Slotted aloha in the simulation')
 parser.add_argument('--num_memory_cells', type=int, default=6,help='Number of memory cells per client')
-parser.add_argument('--selected_mode', type=str, default='vanilla',help='Which setting we are using: centralized, genie_aided, vanilla, user_selection_cos, user_selection_cos_dis, user_selection_acc, user_selection_acc_increment, user_selection_aoi')
+parser.add_argument('--selected_mode', type=str, default='vanilla',help='Which setting we are using: centralized, genie_aided, vanilla, user_selection_cos, user_selection_softmax')
 parser.add_argument('--cos_similarity', type=int, default=2,help='What type of cosine similarity we want to test: cos2 = 2, cos4 = 4, ...')
 parser.add_argument('--cycle', type=int, default=1,help='Number of cycles')
 parser.add_argument('--train_mode', type=str, default='all',help='Which part of network we are training: all, dense, conv')
